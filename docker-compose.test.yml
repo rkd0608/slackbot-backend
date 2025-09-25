@@ -1,0 +1,61 @@
+services:
+  test-app:
+    build: .
+    command: python -m pytest tests/ -v --tb=short
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:admin@test-db:5432/slackbot_test
+      - REDIS_URL=redis://test-redis:6379/15
+      - OPENAI_API_KEY=test_key_12345
+      - SLACK_BOT_TOKEN=xoxb-test-token
+      - SLACK_SIGNING_SECRET=test_signing_secret
+      - APP_BASE_URL=http://localhost:8000
+      - TEST_MODE=true
+    depends_on:
+      - test-db
+      - test-redis
+    volumes:
+      - ./tests:/app/tests
+      - ./app:/app/app
+    networks:
+      - test-network
+
+  test-db:
+    image: ankane/pgvector:latest
+    environment:
+      - POSTGRES_DB=slackbot_test
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=admin
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    volumes:
+      - test_db_data:/var/lib/postgresql/data
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  test-redis:
+    image: redis:7
+    ports:
+      - "6380:6379"  # Different port to avoid conflicts
+    command: redis-server --appendonly yes
+    volumes:
+      - test_redis_data:/data
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  test_db_data:
+  test_redis_data:
+
+networks:
+  test-network:
+    driver: bridge

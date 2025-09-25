@@ -1,0 +1,986 @@
+[
+  {
+    "timestamp": "2025-09-25T03:14:52.694328",
+    "response_id": "adv_noise_001",
+    "query": "Hwo do I rsetrat the Kafak connetor?",
+    "response": "To restart Kafka connector: docker restart kafka-connector. Check logs using `docker logs kafka-connector`.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.625,
+      "named_entity_accuracy": 0.6666666666666666,
+      "partial_match": 0.717948717948718,
+      "overall_score": 0.518
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 1.0,
+      "actionability_score": 0.11764705882352941,
+      "specificity_score": 0.2,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.704
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 1.0,
+        "total_claims": 0,
+        "verified_claims": 0,
+        "unverified_claims": []
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.0,
+      "has_hallucinations": false,
+      "hallucination_details": []
+    },
+    "utility": {
+      "actionability_score": 0.16666666666666666,
+      "relevance_score": 0.0,
+      "completeness_score": 1.0,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.3333333333333333,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.336
+    },
+    "overall_score": 0.615
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.695623",
+    "response_id": "adv_multitopic_001",
+    "query": "What are the deployment steps?",
+    "response": "Deployment process: 1. Build Docker image 2. Run tests 3. Deploy to staging 4. Deploy to prod",
+    "factual_accuracy": {
+      "exact_match": 1.0,
+      "semantic_similarity": 1.0,
+      "named_entity_accuracy": 1.0,
+      "partial_match": 1.0,
+      "overall_score": 1.0
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.5,
+      "actionability_score": 0.11764705882352941,
+      "specificity_score": 0.4,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.609
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 0.6666666666666666,
+        "total_claims": 3,
+        "verified_claims": 2,
+        "unverified_claims": [
+          "deployment process: 1"
+        ]
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.133,
+      "has_hallucinations": false,
+      "hallucination_details": [
+        {
+          "type": "unverified_claim",
+          "content": "deployment process: 1",
+          "severity": "medium"
+        }
+      ]
+    },
+    "utility": {
+      "actionability_score": 0.13043478260869565,
+      "relevance_score": 0.2,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.5,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.325
+    },
+    "overall_score": 0.707
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.696461",
+    "response_id": "consistency_base",
+    "query": "How do I restart the Kafka connector?",
+    "response": "To restart Kafka connector: docker restart kafka-connector. \nCheck logs first with `docker logs kafka-connector`.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.625,
+      "named_entity_accuracy": 0.6666666666666666,
+      "partial_match": 0.6956521739130435,
+      "overall_score": 0.515
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.6666666666666666,
+      "actionability_score": 0.17647058823529413,
+      "specificity_score": 0.2,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.632
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 1.0,
+        "total_claims": 0,
+        "verified_claims": 0,
+        "unverified_claims": []
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.0,
+      "has_hallucinations": false,
+      "hallucination_details": []
+    },
+    "utility": {
+      "actionability_score": 0.20833333333333334,
+      "relevance_score": 0.2857142857142857,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.3333333333333333,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.336
+    },
+    "overall_score": 0.596
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.696789",
+    "response_id": "consistency_var_0",
+    "query": "How do I restart the Kafka connector??",
+    "response": "To restart Kafka connector: docker restart kafka-connector. \nCheck logs first with `docker logs kafka-connector`.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.625,
+      "named_entity_accuracy": 0.6666666666666666,
+      "partial_match": 0.6956521739130435,
+      "overall_score": 0.515
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.6666666666666666,
+      "actionability_score": 0.17647058823529413,
+      "specificity_score": 0.2,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.632
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 1.0,
+        "total_claims": 0,
+        "verified_claims": 0,
+        "unverified_claims": []
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.0,
+      "has_hallucinations": false,
+      "hallucination_details": []
+    },
+    "utility": {
+      "actionability_score": 0.20833333333333334,
+      "relevance_score": 0.2857142857142857,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.3333333333333333,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.336
+    },
+    "overall_score": 0.596
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.697072",
+    "response_id": "consistency_var_1",
+    "query": "how do i restart the kafka integration?",
+    "response": "To restart Kafka connector: docker restart kafka-connector. \nCheck logs first with `docker logs kafka-connector`.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.625,
+      "named_entity_accuracy": 0.6666666666666666,
+      "partial_match": 0.6956521739130435,
+      "overall_score": 0.515
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.6666666666666666,
+      "actionability_score": 0.17647058823529413,
+      "specificity_score": 0.2,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.632
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 1.0,
+        "total_claims": 0,
+        "verified_claims": 0,
+        "unverified_claims": []
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.0,
+      "has_hallucinations": false,
+      "hallucination_details": []
+    },
+    "utility": {
+      "actionability_score": 0.20833333333333334,
+      "relevance_score": 0.2857142857142857,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.3333333333333333,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.336
+    },
+    "overall_score": 0.596
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.697333",
+    "response_id": "consistency_var_2",
+    "query": "how do i restart the kafka plugin?",
+    "response": "To restart Kafka connector: docker restart kafka-connector. \nCheck logs first with `docker logs kafka-connector`.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.625,
+      "named_entity_accuracy": 0.6666666666666666,
+      "partial_match": 0.6956521739130435,
+      "overall_score": 0.515
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.6666666666666666,
+      "actionability_score": 0.17647058823529413,
+      "specificity_score": 0.2,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.632
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 1.0,
+        "total_claims": 0,
+        "verified_claims": 0,
+        "unverified_claims": []
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.0,
+      "has_hallucinations": false,
+      "hallucination_details": []
+    },
+    "utility": {
+      "actionability_score": 0.20833333333333334,
+      "relevance_score": 0.2857142857142857,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.3333333333333333,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.336
+    },
+    "overall_score": 0.596
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.697597",
+    "response_id": "consistency_var_3",
+    "query": "How do I restart the Kafka connector?",
+    "response": "To restart Kafka connector: docker restart kafka-connector. \nCheck logs first with `docker logs kafka-connector`.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.625,
+      "named_entity_accuracy": 0.6666666666666666,
+      "partial_match": 0.6956521739130435,
+      "overall_score": 0.515
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.6666666666666666,
+      "actionability_score": 0.17647058823529413,
+      "specificity_score": 0.2,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.632
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 1.0,
+        "total_claims": 0,
+        "verified_claims": 0,
+        "unverified_claims": []
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.0,
+      "has_hallucinations": false,
+      "hallucination_details": []
+    },
+    "utility": {
+      "actionability_score": 0.20833333333333334,
+      "relevance_score": 0.2857142857142857,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.3333333333333333,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.336
+    },
+    "overall_score": 0.596
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.697872",
+    "response_id": "consistency_var_4",
+    "query": "How  do  I  restart  the  Kafka  connector?",
+    "response": "To restart Kafka connector: docker restart kafka-connector. \nCheck logs first with `docker logs kafka-connector`.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.625,
+      "named_entity_accuracy": 0.6666666666666666,
+      "partial_match": 0.6956521739130435,
+      "overall_score": 0.515
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.6666666666666666,
+      "actionability_score": 0.17647058823529413,
+      "specificity_score": 0.2,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.632
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 1.0,
+        "total_claims": 0,
+        "verified_claims": 0,
+        "unverified_claims": []
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.0,
+      "has_hallucinations": false,
+      "hallucination_details": []
+    },
+    "utility": {
+      "actionability_score": 0.20833333333333334,
+      "relevance_score": 0.2857142857142857,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.3333333333333333,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.336
+    },
+    "overall_score": 0.596
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.698669",
+    "response_id": "perturb_base",
+    "query": "What's our deployment process?",
+    "response": "Deployment process: 1. Build Docker image 2. Run tests 3. Deploy to staging 4. Deploy to prod",
+    "factual_accuracy": {
+      "exact_match": 1.0,
+      "semantic_similarity": 1.0,
+      "named_entity_accuracy": 1.0,
+      "partial_match": 1.0,
+      "overall_score": 1.0
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.5,
+      "actionability_score": 0.11764705882352941,
+      "specificity_score": 0.4,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.609
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 0.6666666666666666,
+        "total_claims": 3,
+        "verified_claims": 2,
+        "unverified_claims": [
+          "deployment process: 1"
+        ]
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.133,
+      "has_hallucinations": false,
+      "hallucination_details": [
+        {
+          "type": "unverified_claim",
+          "content": "deployment process: 1",
+          "severity": "medium"
+        }
+      ]
+    },
+    "utility": {
+      "actionability_score": 0.13043478260869565,
+      "relevance_score": 0.25,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.5,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.335
+    },
+    "overall_score": 0.709
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.698974",
+    "response_id": "perturb_var_0",
+    "query": "What's our deployment process?",
+    "response": "Deployment process: 1. Build Docker image 2. Run tests 3. Deploy to staging 4. Deploy to prod",
+    "factual_accuracy": {
+      "exact_match": 1.0,
+      "semantic_similarity": 1.0,
+      "named_entity_accuracy": 1.0,
+      "partial_match": 1.0,
+      "overall_score": 1.0
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.5,
+      "actionability_score": 0.11764705882352941,
+      "specificity_score": 0.4,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.609
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 0.6666666666666666,
+        "total_claims": 3,
+        "verified_claims": 2,
+        "unverified_claims": [
+          "deployment process: 1"
+        ]
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.133,
+      "has_hallucinations": false,
+      "hallucination_details": [
+        {
+          "type": "unverified_claim",
+          "content": "deployment process: 1",
+          "severity": "medium"
+        }
+      ]
+    },
+    "utility": {
+      "actionability_score": 0.13043478260869565,
+      "relevance_score": 0.25,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.5,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.335
+    },
+    "overall_score": 0.709
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.699247",
+    "response_id": "perturb_var_1",
+    "query": "What's our deployment process?",
+    "response": "Deployment process: 1. Build Docker image 2. Run tests 3. Deploy to staging 4. Deploy to prod",
+    "factual_accuracy": {
+      "exact_match": 1.0,
+      "semantic_similarity": 1.0,
+      "named_entity_accuracy": 1.0,
+      "partial_match": 1.0,
+      "overall_score": 1.0
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.5,
+      "actionability_score": 0.11764705882352941,
+      "specificity_score": 0.4,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.609
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 0.6666666666666666,
+        "total_claims": 3,
+        "verified_claims": 2,
+        "unverified_claims": [
+          "deployment process: 1"
+        ]
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.133,
+      "has_hallucinations": false,
+      "hallucination_details": [
+        {
+          "type": "unverified_claim",
+          "content": "deployment process: 1",
+          "severity": "medium"
+        }
+      ]
+    },
+    "utility": {
+      "actionability_score": 0.13043478260869565,
+      "relevance_score": 0.25,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.5,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.335
+    },
+    "overall_score": 0.709
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.700090",
+    "response_id": "resp_negative_001",
+    "query": "How do I configure Redis?",
+    "response": "I couldn't find this in prior discussions. Please share more details or point to a thread.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.0,
+      "named_entity_accuracy": 0.0,
+      "partial_match": 0.0,
+      "overall_score": 0.0
+    },
+    "completeness": {
+      "information_coverage": 0.0,
+      "query_intent_addressed": 0.0,
+      "actionability_score": 0.0,
+      "specificity_score": 0.0,
+      "completeness_ratio": 0.0,
+      "overall_completeness": 0.0
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 0.0,
+        "total_claims": 2,
+        "verified_claims": 0,
+        "unverified_claims": [
+          "i couldn't find this in prior discussions",
+          "please share more details or point to a thread"
+        ]
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.4,
+      "has_hallucinations": false,
+      "hallucination_details": [
+        {
+          "type": "unverified_claim",
+          "content": "i couldn't find this in prior discussions",
+          "severity": "medium"
+        },
+        {
+          "type": "unverified_claim",
+          "content": "please share more details or point to a thread",
+          "severity": "medium"
+        }
+      ]
+    },
+    "utility": {
+      "actionability_score": 0.0,
+      "relevance_score": 0.2,
+      "completeness_score": 0.0,
+      "clarity_score": 0.09090909090909091,
+      "specificity_score": 0.0,
+      "timeliness_score": 0,
+      "overall_utility": 0.054
+    },
+    "overall_score": 0.134
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.700906",
+    "response_id": "resp_ambiguous_001",
+    "query": "What's the issue?",
+    "response": "You might be referring to deployment steps. Try: 1. Build image 2. Run tests 3. Deploy staging 4. Deploy prod",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.0,
+      "named_entity_accuracy": 0.0,
+      "partial_match": 0.14666666666666667,
+      "overall_score": 0.015
+    },
+    "completeness": {
+      "information_coverage": 0.0,
+      "query_intent_addressed": 0.0,
+      "actionability_score": 0.058823529411764705,
+      "specificity_score": 0.2,
+      "completeness_ratio": 0.9142857142857143,
+      "overall_completeness": 0.133
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 1.0,
+        "total_claims": 2,
+        "verified_claims": 2,
+        "unverified_claims": []
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.125,
+        "indicators": 1,
+        "total_indicators": 8,
+        "details": [
+          "Vague language: \\b(probably|maybe|might|could|possibly)\\b"
+        ]
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.025,
+      "has_hallucinations": false,
+      "hallucination_details": []
+    },
+    "utility": {
+      "actionability_score": 0.045454545454545456,
+      "relevance_score": 0.0,
+      "completeness_score": 0.0,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.16666666666666666,
+      "timeliness_score": 0,
+      "overall_utility": 0.064
+    },
+    "overall_score": 0.249
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.713415",
+    "response_id": "resp_kafka_001",
+    "query": "How do I restart the Kafka connector?",
+    "response": "To restart Kafka connector: docker restart kafka-connector. Before that, check logs with `docker logs kafka-connector`.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.625,
+      "named_entity_accuracy": 0.6666666666666666,
+      "partial_match": 0.6706586826347305,
+      "overall_score": 0.513
+    },
+    "completeness": {
+      "information_coverage": 1.0,
+      "query_intent_addressed": 0.6666666666666666,
+      "actionability_score": 0.11764705882352941,
+      "specificity_score": 0.2,
+      "completeness_ratio": 0.9857142857142858,
+      "overall_completeness": 0.619
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 1.0,
+        "total_claims": 0,
+        "verified_claims": 0,
+        "unverified_claims": []
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.0,
+      "has_hallucinations": false,
+      "hallucination_details": []
+    },
+    "utility": {
+      "actionability_score": 0.16666666666666666,
+      "relevance_score": 0.2857142857142857,
+      "completeness_score": 0.6666666666666666,
+      "clarity_score": 0.18181818181818182,
+      "specificity_score": 0.3333333333333333,
+      "timeliness_score": 0.3333333333333333,
+      "overall_utility": 0.326
+    },
+    "overall_score": 0.59
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.714847",
+    "response_id": "resp_migration_001",
+    "query": "What migration approach did we decide on?",
+    "response": "Team decided to use blue-green deployment for database migration. Rollout to prod immediately.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.2857142857142857,
+      "named_entity_accuracy": 1.0,
+      "partial_match": 0.3253012048192771,
+      "overall_score": 0.375
+    },
+    "completeness": {
+      "information_coverage": 0.0,
+      "query_intent_addressed": 0.5,
+      "actionability_score": 0.0,
+      "specificity_score": 0.2,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.255
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 1.0,
+        "total_claims": 0,
+        "verified_claims": 0,
+        "unverified_claims": []
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 1.0,
+        "justified_confidence": 0,
+        "total_confidence": 0
+      },
+      "overall_hallucination_score": 0.0,
+      "has_hallucinations": false,
+      "hallucination_details": []
+    },
+    "utility": {
+      "actionability_score": 0.0,
+      "relevance_score": 0.0,
+      "completeness_score": 0.5,
+      "clarity_score": 0.09090909090909091,
+      "specificity_score": 0.16666666666666666,
+      "timeliness_score": 0,
+      "overall_utility": 0.139
+    },
+    "overall_score": 0.411
+  },
+  {
+    "timestamp": "2025-09-25T03:14:52.716148",
+    "response_id": "resp_source_001",
+    "query": "What migration approach did we decide on?",
+    "response": "Alice confirmed blue-green deployment yesterday at 5pm. Proceed immediately.",
+    "factual_accuracy": {
+      "exact_match": 0.0,
+      "semantic_similarity": 0.14285714285714285,
+      "named_entity_accuracy": 1.0,
+      "partial_match": 0.3783783783783784,
+      "overall_score": 0.309
+    },
+    "completeness": {
+      "information_coverage": 0.0,
+      "query_intent_addressed": 0.0,
+      "actionability_score": 0.0,
+      "specificity_score": 0.2,
+      "completeness_ratio": 1.0,
+      "overall_completeness": 0.13
+    },
+    "hallucination": {
+      "source_verification": {
+        "score": 0.0,
+        "total_claims": 1,
+        "verified_claims": 0,
+        "unverified_claims": [
+          "alice confirmed blue-green deployment yesterday at 5pm"
+        ]
+      },
+      "contradiction_analysis": {
+        "score": 0.0,
+        "total_facts": 0,
+        "contradictions": []
+      },
+      "fabrication_patterns": {
+        "score": 0.0,
+        "indicators": 0,
+        "total_indicators": 8,
+        "details": []
+      },
+      "confidence_calibration": {
+        "score": 0.0,
+        "justified_confidence": 0,
+        "total_confidence": 1
+      },
+      "overall_hallucination_score": 0.5,
+      "has_hallucinations": false,
+      "hallucination_details": [
+        {
+          "type": "unverified_claim",
+          "content": "alice confirmed blue-green deployment yesterday at 5pm",
+          "severity": "medium"
+        }
+      ]
+    },
+    "utility": {
+      "actionability_score": 0.0,
+      "relevance_score": 0.0,
+      "completeness_score": 0.0,
+      "clarity_score": 0.09090909090909091,
+      "specificity_score": 0.16666666666666666,
+      "timeliness_score": 0,
+      "overall_utility": 0.039
+    },
+    "overall_score": 0.235
+  }
+]
