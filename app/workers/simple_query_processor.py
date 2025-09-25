@@ -102,41 +102,21 @@ async def process_query(
                 await db.flush()
                 query_id = query.id
             
-            # Search knowledge base
+            # Search knowledge base using text search (more reliable)
             vector_service = VectorService()
-            search_results = await vector_service.hybrid_search(
+            search_results = await vector_service._text_search(
                 query=sanitized_query,
-                channel_id=channel_id,
                 workspace_id=workspace_id,
-                limit=5
+                channel_id=channel_id,
+                limit=5,
+                db=db
             )
             
-            # If we don't have enough results, check recent channel activity
-            if len(search_results) < 2:
-                from ..services.simple_knowledge_extractor import SimpleKnowledgeExtractor
-                extractor = SimpleKnowledgeExtractor()
-                recent_insights = await extractor.extract_from_recent_messages(
-                    channel_id, workspace_id, db, hours_back=6
-                )
-                
-                # Add recent insights to search results
-                for insight in recent_insights:
-                    search_results.append({
-                        'knowledge_item': {
-                            'content': insight.get('content', ''),
-                            'metadata': {
-                                'source_channel': f"#{channel_id}",
-                                'created_date': datetime.now().strftime('%Y-%m-%d'),
-                                'participants': ['recent discussion'],
-                                'type': insight.get('type', 'recent_insight')
-                            }
-                        },
-                        'score': 0.8  # High relevance for recent content
-                    })
+            logger.info(f"Found {len(search_results)} knowledge items for query: {sanitized_query}")
             
             # Generate response
             response_data = await generate_focused_response(
-                sanitized_query, search_results, workspace_id, db
+                sanitized_query, search_results, workspace_id, db, query_id
             )
             
             # Update query with response
@@ -150,8 +130,8 @@ async def process_query(
             if response_url:
                 await send_slack_response(response_url, response_data)
             
-            # Also send to channel if it's a slash command
-            if is_slash_command:
+            # Send to channel for both slash commands and mentions
+            if is_slash_command or not response_url:  # mentions don't have response_url
                 await send_channel_response(channel_id, workspace_id, response_data)
             
             logger.info(f"Successfully processed query {query_id}")
@@ -164,7 +144,10 @@ async def process_query(
             
         except Exception as e:
             logger.error(f"Error processing query: {e}")
-            await db.rollback()
+            try:
+                await db.rollback()
+            except Exception as rollback_error:
+                logger.error(f"Error during rollback: {rollback_error}")
             
             # Send error response
             error_response = {
@@ -181,7 +164,8 @@ async def generate_focused_response(
     query_text: str,
     search_results: List[Dict[str, Any]],
     workspace_id: int,
-    db: AsyncSession
+    db: AsyncSession,
+    query_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """Generate a focused response based on team knowledge."""
     
@@ -192,10 +176,13 @@ async def generate_focused_response(
             "blocks": []
         }
     
-    # Extract relevant knowledge
+    # Extract relevant knowledge (use confidence score for filtering)
     relevant_knowledge = []
     for result in search_results:
-        if result.get('score', 0) > 0.7:  # Only high-confidence results
+        confidence = result.get('confidence', 0)
+        similarity = result.get('similarity', 0)
+        # Consider results with high confidence OR high similarity
+        if confidence > 0.6 or similarity > 0.7:
             relevant_knowledge.append(result)
     
     if not relevant_knowledge:
@@ -226,28 +213,107 @@ Response format:
 
     context_text = ""
     for item in relevant_knowledge:
-        knowledge = item.get('knowledge_item', {})
-        metadata = knowledge.get('metadata', {})
+        # Handle both knowledge items and conversation results
+        if 'knowledge_item' in item:
+            # Old format from recent insights
+            knowledge = item.get('knowledge_item', {})
+            metadata = knowledge.get('metadata', {})
+            content = knowledge.get('content', '')
+        else:
+            # New format from search results
+            metadata = item.get('metadata', {})
+            content = item.get('content', '')
         
         context_text += f"""
-Source: {metadata.get('source_channel', 'Unknown channel')} on {metadata.get('created_date', 'Unknown date')}
+Source: {metadata.get('source_channel_id', 'Unknown channel')} on {metadata.get('created_date', 'Unknown date')}
 Participants: {', '.join(metadata.get('participants', []))}
-Content: {knowledge.get('content', '')}
+Content: {content}
+Type: {item.get('type', 'unknown')}
+Confidence: {item.get('confidence', 0)}
 ---
 """
 
     try:
-        response = await openai_service.chat_completion([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Question: {query_text}\n\nTeam Knowledge:\n{context_text}"}
-        ], model="gpt-3.5-turbo", max_tokens=500, temperature=0.1)
+        user_message = f"Question: {query_text}\n\nTeam Knowledge:\n{context_text}"
+        logger.info(f"Sending to AI - Question: {query_text}")
+        logger.info(f"Context length: {len(context_text)} characters")
+        logger.info(f"Number of knowledge items: {len(relevant_knowledge)}")
+        
+        response = await openai_service._make_request(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            max_tokens=500,
+            temperature=0.1
+        )
         
         ai_response = response['choices'][0]['message']['content']
         
+        # Add source attribution
+        sources_text = "\n\n📚 **Sources:**\n"
+        for i, item in enumerate(relevant_knowledge[:3], 1):
+            metadata = item.get('metadata', {})
+            channel_id = metadata.get('source_channel_id', 'unknown')
+            created_date = metadata.get('created_date', 'unknown')
+            if created_date != 'unknown':
+                # Format the date nicely
+                try:
+                    from datetime import datetime
+                    parsed_date = datetime.fromisoformat(created_date.replace('Z', '+00:00'))
+                    formatted_date = parsed_date.strftime('%Y-%m-%d')
+                except:
+                    formatted_date = created_date
+            else:
+                formatted_date = 'unknown'
+            sources_text += f"{i}. #{channel_id} on {formatted_date}\n"
+        
+        # Add interactive button for viewing full sources
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": ai_response + sources_text
+                }
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "👍 Helpful"
+                        },
+                        "style": "primary",
+                        "action_id": f"feedback_helpful_{query_id}"
+                    },
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "👎 Not Helpful"
+                        },
+                        "action_id": f"feedback_not_helpful_{query_id}"
+                    },
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "🔍 View Sources"
+                        },
+                        "action_id": f"view_sources_{query_id}"
+                    }
+                ]
+            }
+        ]
+        
         return {
             "response_type": "in_channel",
-            "text": ai_response,
-            "blocks": []
+            "text": ai_response + sources_text,
+            "blocks": blocks
         }
         
     except Exception as e:
@@ -257,11 +323,17 @@ Content: {knowledge.get('content', '')}
         response_text = f"📚 **Found Information About: {query_text}**\n\n"
         
         for item in relevant_knowledge[:3]:  # Limit to top 3
-            knowledge = item.get('knowledge_item', {})
-            metadata = knowledge.get('metadata', {})
+            # Handle both knowledge items and conversation results
+            if 'knowledge_item' in item:
+                knowledge = item.get('knowledge_item', {})
+                metadata = knowledge.get('metadata', {})
+                content = knowledge.get('content', '')
+            else:
+                metadata = item.get('metadata', {})
+                content = item.get('content', '')
             
-            response_text += f"**From {metadata.get('source_channel', 'team discussion')}:**\n"
-            response_text += f"{knowledge.get('content', '')[:200]}...\n\n"
+            response_text += f"**From {metadata.get('source_channel_id', 'team discussion')}:**\n"
+            response_text += f"{content[:200]}...\n\n"
         
         return {
             "response_type": "in_channel",
@@ -306,12 +378,12 @@ async def send_channel_response(channel_id: str, workspace_id: int, response_dat
             )
             workspace = workspace_result.scalar_one_or_none()
             
-            if workspace and workspace.slack_bot_token:
+            if workspace and workspace.tokens.get('access_token'):
                 await slack_service.send_message(
-                    channel_id=channel_id,
+                    channel=channel_id,
                     text=response_data.get("text", "Response generated"),
                     blocks=response_data.get("blocks", []),
-                    token=workspace.slack_bot_token
+                    token=workspace.tokens.get('access_token')
                 )
                 logger.info(f"Sent response to channel {channel_id}")
             else:

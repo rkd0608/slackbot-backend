@@ -70,7 +70,7 @@ def setup_periodic_tasks(sender, **kwargs):
     # Process conversations for knowledge extraction every 30 minutes
     sender.add_periodic_task(
         1800.0,  # 30 minutes
-        extract_knowledge_from_conversations.s(),
+        "app.workers.simple_knowledge_extractor.extract_knowledge_from_conversations",
         name="extract-knowledge-every-30min"
     )
     
@@ -90,7 +90,6 @@ def setup_periodic_tasks(sender, **kwargs):
 
 # Import tasks to register them
 from .simple_query_processor import process_query_async, process_pending_queries
-from .simple_knowledge_extractor import extract_knowledge_from_conversations
 from .simple_message_processor import process_message_async
 
 @celery_app.task

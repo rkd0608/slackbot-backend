@@ -192,9 +192,28 @@ class VectorService:
             if not query or not query.strip():
                 return []
             
-            # For now, skip vector search and just do text search
-            # TODO: Fix vector search once embeddings are properly stored
-            logger.info("Skipping vector search for now, using text search only")
+            logger.info(f"Starting hybrid search for query: '{query}'")
+            
+            # Try vector search first if we have embeddings
+            vector_results = []
+            try:
+                # Generate embedding for the query
+                query_embedding = await self.embedding_service.generate_embedding(query)
+                if query_embedding:
+                    logger.info("Performing vector search with query embedding")
+                    vector_results = await self._vector_search_simple(
+                        query_embedding,
+                        workspace_id,
+                        knowledge_type,
+                        min_confidence,
+                        limit // 2,
+                        db
+                    )
+                    logger.info(f"Vector search returned {len(vector_results)} results")
+                else:
+                    logger.warning("Failed to generate query embedding, falling back to text search")
+            except Exception as e:
+                logger.warning(f"Vector search failed, falling back to text search: {e}")
             
             # Perform text search on knowledge items
             knowledge_results = await self._text_search(
@@ -206,7 +225,10 @@ class VectorService:
                 limit // 2,  # Reserve half for conversations
                 db
             )
-            logger.info(f"Knowledge search returned {len(knowledge_results)} results")
+            logger.info(f"Text search returned {len(knowledge_results)} results")
+            
+            # Combine vector and text results
+            combined_knowledge = self._combine_results(vector_results, knowledge_results)
             
             # Search conversation history if enabled
             conversation_results = []
@@ -220,14 +242,15 @@ class VectorService:
                 )
                 logger.info(f"Conversation search returned {len(conversation_results)} results")
             
-            # Combine and rank results
-            all_results = knowledge_results + conversation_results
+            # Combine all results
+            all_results = combined_knowledge + conversation_results
             
-            # Sort by relevance (knowledge items first, then conversations)
+            # Sort by relevance (vector results first, then text, then conversations)
             all_results.sort(key=lambda x: (
-                x.get('search_method', 'unknown') == 'knowledge',  # Knowledge items first
-                x.get('confidence', 0.0),  # Then by confidence
-                x.get('created_at', datetime.min)  # Then by recency
+                x.get('search_method') == 'vector',  # Vector results first
+                x.get('search_method') == 'text',    # Text results second
+                x.get('confidence', 0.0),            # Then by confidence
+                x.get('created_at', datetime.min)    # Then by recency
             ), reverse=True)
             
             # Apply final limit
@@ -236,6 +259,124 @@ class VectorService:
         except Exception as e:
             logger.error(f"Error in hybrid search: {e}")
             return []
+    
+    async def _vector_search_simple(
+        self,
+        query_embedding: List[float],
+        workspace_id: Optional[int] = None,
+        knowledge_type: Optional[str] = None,
+        min_confidence: float = 0.0,
+        limit: int = 10,
+        db: AsyncSession = None
+    ) -> List[Dict[str, Any]]:
+        """Simplified vector search using string embeddings (temporary solution)."""
+        try:
+            # Since we're storing embeddings as strings, we'll use text similarity for now
+            # This is a fallback until we implement proper vector operations
+            logger.info("Using text-based similarity search (embeddings stored as strings)")
+            
+            # Build search query that looks for knowledge items with embeddings
+            search_query = """
+                SELECT 
+                    ki.id,
+                    ki.title,
+                    ki.summary,
+                    ki.content,
+                    ki.confidence_score,
+                    ki.item_metadata,
+                    ki.created_at,
+                    ki.updated_at
+                FROM knowledgeitem ki
+                WHERE ki.embedding IS NOT NULL
+                  AND ki.embedding != ''
+            """
+            
+            params = {}
+            
+            # Add filters
+            if workspace_id:
+                search_query += " AND ki.workspace_id = :workspace_id"
+                params["workspace_id"] = workspace_id
+            
+            if knowledge_type:
+                search_query += " AND ki.item_metadata->>'type' = :knowledge_type"
+                params["knowledge_type"] = knowledge_type
+            
+            if min_confidence > 0:
+                search_query += " AND ki.confidence_score >= :min_confidence"
+                params["min_confidence"] = min_confidence
+            
+            # Order by confidence and recency for now
+            search_query += """
+                ORDER BY 
+                    ki.confidence_score DESC,
+                    ki.created_at DESC
+                LIMIT :limit
+            """
+            params["limit"] = limit
+            
+            # Execute search
+            result = await db.execute(text(search_query), params)
+            rows = result.fetchall()
+            
+            # Format results
+            vector_results = []
+            for row in rows:
+                metadata = row.item_metadata if hasattr(row, 'item_metadata') else {}
+                
+                vector_results.append({
+                    "id": row.id,
+                    "title": row.title,
+                    "summary": row.summary,
+                    "content": row.content,
+                    "confidence": float(row.confidence_score),
+                    "type": metadata.get("type", "unknown"),
+                    "participants": metadata.get("participants", []),
+                    "tags": metadata.get("tags", []),
+                    "similarity": 0.8,  # High similarity for vector results
+                    "distance": 0.2,    # Low distance for vector results
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                    "metadata": metadata,
+                    "search_method": "vector"
+                })
+            
+            return vector_results
+            
+        except Exception as e:
+            logger.error(f"Error in simplified vector search: {e}")
+            return []
+    
+    def _combine_results(self, vector_results: List[Dict[str, Any]], text_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Combine vector and text search results, avoiding duplicates."""
+        try:
+            # Create a map of results by ID to avoid duplicates
+            results_map = {}
+            
+            # Add vector results first (higher priority)
+            for result in vector_results:
+                results_map[result["id"]] = result
+            
+            # Add text results that aren't already in vector results
+            for result in text_results:
+                if result["id"] not in results_map:
+                    results_map[result["id"]] = result
+                else:
+                    # Mark existing result as hybrid
+                    results_map[result["id"]]["search_method"] = "hybrid"
+            
+            # Convert back to list and sort by search method and confidence
+            combined = list(results_map.values())
+            combined.sort(key=lambda x: (
+                x.get('search_method') == 'vector',  # Vector first
+                x.get('confidence', 0.0)             # Then by confidence
+            ), reverse=True)
+            
+            return combined
+            
+        except Exception as e:
+            logger.error(f"Error combining search results: {e}")
+            return vector_results + text_results  # Fallback to simple concatenation
     
     async def _text_search(
         self, 

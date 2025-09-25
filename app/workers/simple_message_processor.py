@@ -60,26 +60,29 @@ async def process_message(
                 workspace_id, channel_id, thread_ts, db
             )
             
-            # Check if message already exists
-            existing_query = select(Message).where(Message.id == message_id)
+            # Check if message already exists by slack_message_id
+            existing_query = select(Message).where(Message.slack_message_id == timestamp)
             existing_result = await db.execute(existing_query)
             existing_message = existing_result.scalar_one_or_none()
             
             if existing_message:
-                logger.info(f"Message {message_id} already processed")
-                return {"status": "already_processed", "message_id": message_id}
+                logger.info(f"Message {timestamp} already processed")
+                return {"status": "already_processed", "message_id": existing_message.id}
             
-            # Create message record
+            # Create message record with new model structure
             message = Message(
-                id=message_id,
                 conversation_id=conversation.id,
-                slack_channel_id=channel_id,
+                slack_message_id=timestamp,
                 slack_user_id=user_id,
-                text=text or "",
-                slack_timestamp=timestamp,
-                thread_timestamp=thread_ts,
-                created_at=datetime.utcnow(),
-                raw_payload=raw_payload or {}
+                content=text or "",
+                message_metadata={
+                    'raw_payload': raw_payload or {},
+                    'slack_ts': timestamp,
+                    'slack_user_id': user_id,
+                    'slack_thread_ts': thread_ts,
+                    'slack_type': 'message',
+                    'slack_subtype': None
+                }
             )
             
             db.add(message)
@@ -137,9 +140,10 @@ async def get_or_create_conversation(
         conversation = Conversation(
             workspace_id=workspace_id,
             slack_channel_id=channel_id,
+            slack_channel_name=f"channel-{channel_id}",
             thread_timestamp=thread_ts,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            title=f"#{channel_id}",
+            conversation_metadata={}
         )
         
         db.add(conversation)

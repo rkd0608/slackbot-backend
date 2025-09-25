@@ -77,7 +77,8 @@ async def get_or_create_user(slack_user_id: str, workspace_id: int, db: AsyncSes
         role="user"
     )
     db.add(new_user)
-    await db.flush()
+    await db.flush()  # This ensures the user gets an ID
+    await db.refresh(new_user)  # This ensures we have the full user object
     return new_user
 
 @router.post("/events")
@@ -205,50 +206,60 @@ async def handle_message_event(
             await db.refresh(conversation)
             logger.info(f"Created new conversation {conversation.id} for channel {channel_id}")
         
-        # Store message with new model structure
-        message = Message(
-            conversation_id=conversation.id,
-            slack_message_id=event.get('ts', ''),
-            slack_user_id=user_id,
-            content=event.get('text', ''),
-            message_metadata={
-                'raw_payload': event,
-                'slack_ts': event.get('ts'),
-                'slack_user_id': user_id,
-                'slack_thread_ts': event.get('thread_ts'),
-                'slack_reply_count': event.get('reply_count', 0),
-                'slack_reply_users_count': event.get('reply_users_count', 0),
-                'slack_type': event.get('type'),
-                'slack_subtype': event.get('subtype')
-            }
+        # Idempotency: avoid duplicate inserts for the same Slack message
+        message_ts = event.get('ts', '')
+        existing_msg_result = await db.execute(
+            select(Message).where(
+                and_(
+                    Message.conversation_id == conversation.id,
+                    Message.slack_message_id == message_ts
+                )
+            )
         )
+        existing_message = existing_msg_result.scalar_one_or_none()
+
+        if existing_message:
+            message_id_var = existing_message.id
+            logger.info(f"Message already stored for ts {message_ts} in conversation {conversation.id}, skipping insert")
+        else:
+            # Store message with new model structure
+            message = Message(
+                conversation_id=conversation.id,
+                slack_message_id=message_ts,
+                slack_user_id=user_id,
+                content=event.get('text', ''),
+                message_metadata={
+                    'raw_payload': event,
+                    'slack_ts': event.get('ts'),
+                    'slack_user_id': user_id,
+                    'slack_thread_ts': event.get('thread_ts'),
+                    'slack_reply_count': event.get('reply_count', 0),
+                    'slack_reply_users_count': event.get('reply_users_count', 0),
+                    'slack_type': event.get('type'),
+                    'slack_subtype': event.get('subtype')
+                }
+            )
+            db.add(message)
+            await db.commit()
+            await db.refresh(message)
+            message_id_var = message.id
+            logger.info(f"Stored message {message.id} from user {user_id} in channel {channel_id}")
         
-        db.add(message)
-        await db.commit()
-        
-        logger.info(f"Stored message {message.id} from user {user_id} in channel {channel_id}")
-        
-        # Add background task for message processing
+        # Add background task for message processing using simple system
         # Import here to avoid circular dependency
-        from ...workers.message_processor import process_message_async, analyze_conversation_state
+        from ...workers.simple_message_processor import process_message_async
         
         # Process the individual message (for immediate needs)
         background_tasks.add_task(
             process_message_async,
-            message_id=message.id,
+            message_id=message_id_var,
             workspace_id=workspace.id,
             channel_id=channel_id,
             user_id=user_id,
             text=text,
+            timestamp=ts,
             thread_ts=thread_ts,
-            ts=ts
-        )
-        
-        # NEW: Analyze conversation state to see if it's ready for knowledge extraction
-        # This is the key improvement - we check after each message if the conversation is complete
-        background_tasks.add_task(
-            analyze_conversation_state,
-            conversation_id=conversation.id
+            raw_payload=event
         )
         
     except Exception as e:
@@ -260,13 +271,95 @@ async def handle_app_mention_event(
     db: AsyncSession, 
     background_tasks: BackgroundTasks
 ):
-    """Handle app mention events (when bot is mentioned)."""
+    """Handle app mention events (when @reno is mentioned)."""
     try:
-        # Similar to message event but for bot mentions
-        await handle_message_event(event, event_data, db, background_tasks)
+        # Extract event data
+        channel_id = event.get("channel")
+        user_id = event.get("user")
+        text = event.get("text", "")
+        ts = event.get("ts")
+        thread_ts = event.get("thread_ts")
+        team_id = event_data.get("team_id")
         
-        # Additional bot-specific logic can be added here
-        logger.info(f"Bot mentioned in channel {event.get('channel')}")
+        logger.info(f"Bot mentioned in channel {channel_id} by user {user_id}: {text}")
+        
+        # Skip if no text or user
+        if not text or not user_id:
+            return
+        
+        # Get workspace and user
+        workspace = await get_workspace_by_slack_id(team_id, db)
+        if not workspace:
+            logger.warning(f"Workspace not found for team: {team_id}")
+            return
+        
+        user = await get_or_create_user(user_id, workspace.id, db)
+        if not user:
+            logger.warning(f"Could not create/find user: {user_id}")
+            return
+        
+        # CRITICAL: Commit the user creation before calling Celery task
+        await db.commit()
+        
+        # Extract the query text by removing the bot mention
+        import re
+        # Remove bot mention (e.g., "<@U1234567890>" or "@reno")
+        query_text = re.sub(r'<@[^>]+>', '', text).strip()
+        query_text = re.sub(r'@\w+', '', query_text).strip()
+        
+        if not query_text:
+            # Send a helpful message if no query is provided
+            slack_service = SlackService()
+            if workspace.tokens.get('access_token'):
+                await slack_service.send_message(
+                    channel=channel_id,
+                    text="👋 Hi! I'm Reno, your team knowledge assistant. Ask me anything about your team's conversations!\n\nExample: `@reno How do I restart the Kafka connector?`",
+                    token=workspace.tokens.get('access_token')
+                )
+            return
+        
+        logger.info(f"Extracted query from mention: '{query_text}'")
+        
+        # Rate limiting check
+        if not await check_rate_limit(user_id, workspace.id, db):
+            slack_service = SlackService()
+            if workspace.tokens.get('access_token'):
+                await slack_service.send_message(
+                    channel=channel_id,
+                    text="⏳ Slow down there! You're asking questions too quickly. Please wait a moment before asking again.",
+                    token=workspace.tokens.get('access_token')
+                )
+            return
+        
+        # Process the query asynchronously (same as /ask command)
+        from ...workers.simplified_celery_app import celery_app
+        
+        task_result = celery_app.send_task(
+            'app.workers.simple_query_processor.process_query_async',
+            args=[
+                None,  # query_id - will be generated
+                workspace.id,  # workspace_id
+                user.id,  # user_id
+                channel_id,  # channel_id
+                query_text,  # query_text (cleaned)
+                None,  # response_url (not available for mentions)
+                False  # is_slash_command (this is a mention)
+            ]
+        )
+        
+        logger.info(f"Queued query processing task for mention: {task_result.id}")
+        
+        # Send immediate acknowledgment
+        slack_service = SlackService()
+        if workspace.tokens.get('access_token'):
+            await slack_service.send_message(
+                channel=channel_id,
+                text=f"🤔 Let me search for information about: *{query_text}*\n\nSearching through our team knowledge...",
+                token=workspace.tokens.get('access_token')
+            )
+        
+        # Also store the message for knowledge extraction (same as regular messages)
+        await handle_message_event(event, event_data, db, background_tasks)
         
     except Exception as e:
         logger.error("Error handling app mention event: {}", str(e), exc_info=True)
@@ -346,6 +439,9 @@ async def handle_ask_command(
                 "response_type": "ephemeral",
                 "text": "❌ User not found. Please contact your administrator."
             }
+        
+        # CRITICAL: Commit the user creation before calling Celery task
+        await db.commit()
         
         # Rate limiting check
         if not await check_rate_limit(user_id, workspace.id, db):
@@ -540,6 +636,7 @@ async def test_slack_integration():
     except Exception as e:
         logger.error("Error in test endpoint: {}", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @router.get("/messages/{channel_id}")
 async def get_channel_messages(

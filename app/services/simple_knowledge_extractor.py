@@ -72,8 +72,9 @@ class SimpleKnowledgeExtractor:
     ) -> List[int]:
         """Find conversations that might have extractable knowledge."""
         try:
-            # Look for conversations from the last 24 hours with multiple messages
-            since = datetime.now(timezone.utc) - timedelta(hours=24)
+            # Look for conversations from the last 30 days with multiple messages
+            since = datetime.now(timezone.utc) - timedelta(days=30)
+            logger.info(f"Looking for conversations since: {since}")
             
             # Find conversations with at least 3 messages and 2 participants
             query = select(
@@ -100,10 +101,14 @@ class SimpleKnowledgeExtractor:
                 desc(func.count(Message.id))  # Process conversations with more messages first
             ).limit(limit)
             
+            logger.info(f"Executing query for workspace {workspace_id}")
             result = await db.execute(query)
-            conversations = [row[0] for row in result.fetchall()]
+            rows = result.fetchall()
+            conversations = [row[0] for row in rows]
             
             logger.info(f"Found {len(conversations)} conversations to process")
+            for row in rows:
+                logger.info(f"  Conversation {row[0]}: {row[1]} messages, {row[2]} participants")
             return conversations
             
         except Exception as e:
@@ -157,15 +162,21 @@ class SimpleKnowledgeExtractor:
                         knowledge_data.get('content', '')
                     )
                     
+                    # Create knowledge item with embedding stored as string
+                    embedding_str = '[' + ','.join(map(str, embedding)) + ']'
+                    
                     knowledge_item = KnowledgeItem(
                         workspace_id=conversation.workspace_id,
                         conversation_id=conversation_id,
+                        title=knowledge_data.get('title', knowledge_data.get('summary', 'Knowledge Item')),
+                        summary=knowledge_data.get('summary', ''),
                         knowledge_type=knowledge_data.get('type', 'general'),
                         content=knowledge_data.get('content', ''),
                         confidence_score=knowledge_data.get('confidence', 0.5),
                         source_messages=[msg.id for msg in messages],
                         participants=list(set(msg.slack_user_id for msg in messages)),
-                        metadata={
+                        embedding=embedding_str,  # Store as string
+                        item_metadata={
                             'source_channel_id': conversation.slack_channel_id,
                             'source_channel': knowledge_data.get('source_channel', 'unknown'),
                             'created_date': conversation.created_at.isoformat(),
@@ -175,11 +186,11 @@ class SimpleKnowledgeExtractor:
                             'summary': knowledge_data.get('summary', ''),
                             'keywords': knowledge_data.get('keywords', [])
                         },
-                        embedding=embedding,
                         created_at=datetime.now(timezone.utc)
                     )
                     
                     db.add(knowledge_item)
+                    
                     knowledge_items.append(knowledge_item)
                     
                 except Exception as e:
@@ -202,7 +213,7 @@ class SimpleKnowledgeExtractor:
         for msg in messages:
             timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M")
             user_id = msg.slack_user_id
-            text = msg.text or ""
+            text = msg.content or ""
             
             formatted_lines.append(f"[{timestamp}] {user_id}: {text}")
         
@@ -254,10 +265,15 @@ Return JSON format:
 Only extract knowledge if there's genuinely valuable information. Return empty array if it's just casual conversation."""
 
         try:
-            response = await self.openai_service.chat_completion([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Extract knowledge from this team conversation:\n\n{conversation_text}"}
-            ], model="gpt-3.5-turbo", temperature=0.1, max_tokens=1000)
+            response = await self.openai_service._make_request(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Extract knowledge from this team conversation:\n\n{conversation_text}"}
+                ],
+                temperature=0.1,
+                max_tokens=1000
+            )
             
             raw_content = response['choices'][0]['message']['content']
             result = self._safe_json_parse(raw_content)
@@ -329,10 +345,11 @@ Only extract knowledge if there's genuinely valuable information. Return empty a
         try:
             since = datetime.now(timezone.utc) - timedelta(hours=hours_back)
             
-            # Get recent messages from the channel
-            query = select(Message).where(
+            # Get recent messages from the channel through conversation
+            query = select(Message).join(Conversation).where(
                 and_(
-                    Message.slack_channel_id == channel_id,
+                    Conversation.slack_channel_id == channel_id,
+                    Conversation.workspace_id == workspace_id,
                     Message.created_at >= since
                 )
             ).order_by(Message.created_at)
@@ -357,10 +374,15 @@ Be concise and only extract if there's genuinely useful information.
 
 Return JSON: {"insights": [{"content": "...", "type": "..."}]}"""
             
-            response = await self.openai_service.chat_completion([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": conversation_text}
-            ], model="gpt-3.5-turbo", temperature=0.1, max_tokens=500)
+            response = await self.openai_service._make_request(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": conversation_text}
+                ],
+                temperature=0.1,
+                max_tokens=500
+            )
             
             result = self._safe_json_parse(response['choices'][0]['message']['content'])
             

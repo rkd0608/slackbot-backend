@@ -12,7 +12,7 @@ from ..core.database import Base
 
 
 class Vector(TypeDecorator):
-    """Custom type for pgvector."""
+    """Custom type for pgvector that properly handles vector data."""
     
     impl = String
     cache_ok = True
@@ -23,14 +23,20 @@ class Vector(TypeDecorator):
     
     def load_dialect_impl(self, dialect):
         if dialect.name == 'postgresql':
-            return dialect.type_descriptor(String)
+            # Use the actual vector type from pgvector
+            from sqlalchemy.dialects.postgresql import ARRAY
+            from sqlalchemy import Float
+            return ARRAY(Float)
         return self.impl
     
     def process_bind_param(self, value, dialect):
         if value is None:
             return None
         if dialect.name == 'postgresql':
-            return str(value)
+            if isinstance(value, list):
+                # Convert list to proper vector format for pgvector
+                return value  # Let SQLAlchemy handle the array conversion
+            return value
         return value
     
     def process_result_value(self, value, dialect):
@@ -175,8 +181,8 @@ class KnowledgeItem(BaseModel):
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     source_messages: Mapped[Optional[List[int]]] = mapped_column(JSONB, nullable=True, default=list)
     participants: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True, default=list)
-    # Use custom Vector type for pgvector
-    embedding: Mapped[Optional[str]] = mapped_column(Vector(), nullable=True)
+    # Use proper vector type for pgvector - store as text for now
+    embedding: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     item_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True, default=dict)
     
     # Relationships

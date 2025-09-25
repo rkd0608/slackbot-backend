@@ -65,6 +65,7 @@ class SlackService:
         channel: str, 
         text: str, 
         thread_ts: Optional[str] = None,
+        blocks: Optional[list] = None,
         token: Optional[str] = None
     ) -> Optional[str]:
         """Send a message to a Slack channel."""
@@ -78,6 +79,9 @@ class SlackService:
             
             if thread_ts:
                 message_kwargs["thread_ts"] = thread_ts
+            
+            if blocks:
+                message_kwargs["blocks"] = blocks
             
             response = await client.chat_postMessage(**message_kwargs)
             

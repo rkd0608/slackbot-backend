@@ -37,13 +37,13 @@ async def list_knowledge(
             query = query.where(KnowledgeItem.metadata.contains({"type": knowledge_type}))
         
         if min_confidence > 0:
-            query = query.where(KnowledgeItem.confidence >= min_confidence)
+            query = query.where(KnowledgeItem.confidence_score >= min_confidence)
         
         if max_confidence < 1.0:
-            query = query.where(KnowledgeItem.confidence <= max_confidence)
+            query = query.where(KnowledgeItem.confidence_score <= max_confidence)
         
         # Order by confidence and creation date
-        query = query.order_by(KnowledgeItem.confidence.desc(), KnowledgeItem.created_at.desc())
+        query = query.order_by(KnowledgeItem.confidence_score.desc(), KnowledgeItem.created_at.desc())
         query = query.limit(limit).offset(offset)
         
         # Execute query
@@ -60,7 +60,7 @@ async def list_knowledge(
                 "title": item.title,
                 "summary": item.summary,
                 "content": item.content,
-                "confidence": item.confidence,
+                "confidence": item.confidence_score,
                 "type": metadata.get("type", "unknown"),
                 "participants": metadata.get("participants", []),
                 "tags": metadata.get("tags", []),
@@ -152,7 +152,7 @@ async def search_knowledge(
                 KnowledgeItem.title.ilike(f"%{query}%"),
                 KnowledgeItem.summary.ilike(f"%{query}%"),
                 KnowledgeItem.content.ilike(f"%{query}%"),
-                KnowledgeItem.metadata["tags"].astext.ilike(f"%{query}%")
+                KnowledgeItem.item_metadata["tags"].astext.ilike(f"%{query}%")
             )
         )
         
@@ -161,13 +161,13 @@ async def search_knowledge(
             search_query = search_query.where(KnowledgeItem.workspace_id == workspace_id)
         
         if knowledge_type:
-            search_query = search_query.where(KnowledgeItem.metadata["type"].astext == knowledge_type)
+            search_query = search_query.where(KnowledgeItem.item_metadata["type"].astext == knowledge_type)
         
         if min_confidence > 0:
-            search_query = search_query.where(KnowledgeItem.confidence >= min_confidence)
+            search_query = search_query.where(KnowledgeItem.confidence_score >= min_confidence)
         
         # Order by relevance (confidence) and creation date
-        search_query = search_query.order_by(KnowledgeItem.confidence.desc(), KnowledgeItem.created_at.desc())
+        search_query = search_query.order_by(KnowledgeItem.confidence_score.desc(), KnowledgeItem.created_at.desc())
         search_query = search_query.limit(limit)
         
         # Execute query
@@ -178,13 +178,13 @@ async def search_knowledge(
         knowledge_items = []
         for item, workspace_name in rows:
             # Safely access metadata fields
-            metadata = item.metadata or {}
+            metadata = item.item_metadata or {}
             knowledge_items.append({
                 "id": item.id,
                 "title": item.title,
                 "summary": item.summary,
                 "content": item.content,
-                "confidence": item.confidence,
+                "confidence": item.confidence_score,
                 "type": metadata.get("type", "unknown"),
                 "participants": metadata.get("participants", []),
                 "tags": metadata.get("tags", []),
@@ -231,9 +231,9 @@ async def get_knowledge_stats(
         
         # Confidence distribution
         confidence_query = base_query.add_columns(
-            func.avg(KnowledgeItem.confidence).label("avg_confidence"),
-            func.min(KnowledgeItem.confidence).label("min_confidence"),
-            func.max(KnowledgeItem.confidence).label("max_confidence")
+            func.avg(KnowledgeItem.confidence_score).label("avg_confidence"),
+            func.min(KnowledgeItem.confidence_score).label("min_confidence"),
+            func.max(KnowledgeItem.confidence_score).label("max_confidence")
         )
         
         confidence_result = await db.execute(confidence_query)
@@ -308,8 +308,8 @@ async def get_knowledge_quality_stats(
         for min_conf, max_conf, label in confidence_ranges:
             range_query = base_query.where(
                 and_(
-                    KnowledgeItem.confidence >= min_conf,
-                    KnowledgeItem.confidence < max_conf
+                    KnowledgeItem.confidence_score >= min_conf,
+                    KnowledgeItem.confidence_score < max_conf
                 )
             )
             count_result = await db.execute(select(func.count()).select_from(range_query.subquery()))
@@ -400,6 +400,33 @@ async def verify_knowledge_item(
     except Exception as e:
         logger.error(f"Error verifying knowledge item {knowledge_id}: {e}", exc_info=True)
         await db.rollback()
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.post("/extract")
+async def trigger_knowledge_extraction(
+    workspace_id: int = Query(..., description="Workspace ID to extract knowledge for"),
+    force: bool = Query(False, description="Force extraction even if recently processed"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Trigger knowledge extraction for a workspace."""
+    try:
+        # Import here to avoid circular dependency
+        from ...workers.simple_knowledge_extractor import extract_knowledge_for_workspace
+        
+        # Queue the extraction task
+        task_result = extract_knowledge_for_workspace.delay(workspace_id)
+        
+        logger.info(f"Queued knowledge extraction for workspace {workspace_id}, task ID: {task_result.id}")
+        
+        return {
+            "status": "success",
+            "message": "Knowledge extraction queued",
+            "task_id": task_result.id,
+            "workspace_id": workspace_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error triggering knowledge extraction: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.delete("/{knowledge_id}")
