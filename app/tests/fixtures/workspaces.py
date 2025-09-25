@@ -1,2 +1,0 @@
-"""Fixture: workspaces placeholder."""
-# TODO
