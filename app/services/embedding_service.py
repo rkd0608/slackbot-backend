@@ -1,15 +1,15 @@
 """Embedding service for generating and managing vector embeddings for knowledge search."""
 
 import asyncio
-import time
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime
+
 import numpy as np
-from loguru import logger
 import openai
+from loguru import logger
 from openai import AsyncOpenAI
 
 from ..core.config import settings
+
 
 class EmbeddingService:
     """Service for generating and managing vector embeddings."""

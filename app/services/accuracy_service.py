@@ -325,7 +325,7 @@ class AccuracyService:
             }}"""
             
             response = await self.openai_service._make_request(
-                model="gpt-3.5-turbo",  # Use faster model for synthetic generation
+                model="gpt-5-nano",  # Use faster model for synthetic generation
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Generate a {conversation_type} conversation"}
@@ -475,7 +475,7 @@ class AccuracyService:
             }"""
             
             response = await self.openai_service._make_request(
-                model="gpt-3.5-turbo",  # Use cheaper model for testing
+                model="gpt-5-nano",  # Use cheaper model for testing
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Conversation:\n{conversation_text}"}
@@ -513,7 +513,7 @@ class AccuracyService:
             Similarity score:"""
             
             response = await self.openai_service._make_request(
-                model="gpt-3.5-turbo",
+                model="gpt-5-nano",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
@@ -730,7 +730,7 @@ class AccuracyService:
                 }"""
                 
                 response = await self.openai_service._make_request(
-                    model="gpt-3.5-turbo",
+                    model="gpt-5-nano",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"Generate incomplete conversation #{i+1}"}
@@ -789,7 +789,7 @@ class AccuracyService:
             Analysis:"""
             
             response = await self.openai_service._make_request(
-                model="gpt-3.5-turbo",
+                model="gpt-5-nano",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}

@@ -79,10 +79,14 @@ class SlackService:
             
             if thread_ts:
                 message_kwargs["thread_ts"] = thread_ts
+                logger.info(f"Sending message to thread {thread_ts}")
+            else:
+                logger.info("Sending message to channel (no thread)")
             
             if blocks:
                 message_kwargs["blocks"] = blocks
             
+            logger.info(f"Message kwargs: {message_kwargs}")
             response = await client.chat_postMessage(**message_kwargs)
             
             if response["ok"]:

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Request, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_, distinct
 import json
 import hmac
 import hashlib
@@ -19,8 +19,6 @@ from ...models.base import Workspace, Message, User
 from ...services.slack_service import SlackService
 from ...services.backfill_service import BackfillService
 from ...services.interaction_service import InteractionService
-
-# Import removed to avoid circular dependency - will be imported when needed
 
 router = APIRouter()
 
@@ -128,7 +126,7 @@ async def handle_slack_events(
                 if team_id:
                     workspace = await get_workspace_by_slack_id(team_id, db)
                     if workspace:
-                        logger.info(f"🔄 Triggering automatic backfill for new workspace {workspace.id}")
+                        logger.info(f"Triggering automatic backfill for new workspace {workspace.id}")
                         await backfill_service.trigger_workspace_backfill(workspace.id, days_back=30)
             except Exception as e:
                 logger.warning(f"Failed to trigger automatic backfill: {e}")
@@ -143,7 +141,7 @@ async def handle_slack_events(
                     workspace = await get_workspace_by_slack_id(team_id, db)
                     if workspace:
                         logger.info(
-                            f"🔄 Triggering automatic backfill for new channel {channel_id} in workspace {workspace.id}")
+                            f"Triggering automatic backfill for new channel {channel_id} in workspace {workspace.id}")
                         await backfill_service.trigger_channel_backfill(workspace.id, channel_id, days_back=30)
             except Exception as e:
                 logger.warning(f"Failed to trigger channel backfill: {e}")
@@ -252,10 +250,34 @@ async def handle_message_event(
             await db.refresh(message)
             message_id_var = message.id
             logger.info(f"Stored message {message.id} from user {user_id} in channel {channel_id}")
+            
+            # Update conversation metadata
+            await update_conversation_metadata(conversation.id, db)
 
-        # Add background task for message processing using simple system
+        # Check if this is a message in a thread where the bot should respond
+        should_respond = await should_bot_respond_in_thread(
+            text, thread_ts, channel_id, workspace.id, db
+        )
+        
+        if should_respond:
+            logger.info(f"Bot should respond to message in thread: {text}")
+            # Process as a query in the thread
+            await handle_app_mention_event(
+                event={
+                    "channel": channel_id,
+                    "user": user_id,
+                    "text": text,
+                    "ts": ts,
+                    "thread_ts": thread_ts
+                },
+                event_data={"team_id": team_id},
+                db=db,
+                background_tasks=background_tasks
+            )
+
+        # Add background task for message processing
         # Import here to avoid circular dependency
-        from ...workers.simple_message_processor import process_message_async
+        from ...workers.message_processor import process_message_async
 
         # Process the individual message (for immediate needs)
         background_tasks.add_task(
@@ -290,7 +312,12 @@ async def handle_app_mention_event(
         thread_ts = event.get("thread_ts")
         team_id = event_data.get("team_id")
 
-        logger.info(f"Bot mentioned in channel {channel_id} by user {user_id}: {text}")
+        # If the message is not in a thread, use the message timestamp to create a thread
+        if not thread_ts:
+            thread_ts = ts
+            logger.info(f"Message not in thread, will create thread with ts: {thread_ts}")
+
+        logger.info(f"Bot mentioned in channel {channel_id} by user {user_id}: {text} (thread_ts: {thread_ts})")
 
         # Skip if no text or user
         if not text or not user_id:
@@ -341,10 +368,10 @@ async def handle_app_mention_event(
             return
 
         # Process the query asynchronously (same as /ask command)
-        from ...workers.simplified_celery_app import celery_app
+        from ...workers.celery_app import celery_app
 
         task_result = celery_app.send_task(
-            'app.workers.simple_query_processor.process_query_async',
+            'app.workers.query_processor.process_query_async',
             args=[
                 None,  # query_id - will be generated
                 workspace.id,  # workspace_id
@@ -352,20 +379,25 @@ async def handle_app_mention_event(
                 channel_id,  # channel_id
                 query_text,  # query_text (cleaned)
                 None,  # response_url (not available for mentions)
-                False  # is_slash_command (this is a mention)
+                False,  # is_slash_command (this is a mention)
+                thread_ts  # thread_ts (for threaded responses)
             ]
         )
 
         logger.info(f"Queued query processing task for mention: {task_result.id}")
 
-        # Send immediate acknowledgment
+        # React with eyes emoji to show we're processing (optional - may fail if scope missing)
         slack_service = SlackService()
         if workspace.tokens.get('access_token'):
-            await slack_service.send_message(
-                channel=channel_id,
-                text=f"🤔 Let me search for information about: *{query_text}*\n\nSearching through our team knowledge...",
-                token=workspace.tokens.get('access_token')
-            )
+            try:
+                await slack_service.add_reaction(
+                    channel=channel_id,
+                    timestamp=event.get('ts'),
+                    name='eyes',
+                    token=workspace.tokens.get('access_token')
+                )
+            except Exception as e:
+                logger.warning(f"Could not add reaction (missing scope?): {e}")
 
         # Also store the message for knowledge extraction (same as regular messages)
         await handle_message_event(event, event_data, db, background_tasks)
@@ -433,7 +465,7 @@ async def handle_ask_command(
         if not all([user_id, channel_id, team_id, text]):
             return {
                 "response_type": "ephemeral",
-                "text": "❌ Missing required command parameters. Please try again."
+                "text": "Missing required command parameters. Please try again."
             }
 
         # Get workspace and user
@@ -441,14 +473,14 @@ async def handle_ask_command(
         if not workspace:
             return {
                 "response_type": "ephemeral",
-                "text": "❌ Workspace not found. Please contact your administrator."
+                "text": "Workspace not found. Please contact your administrator."
             }
 
         user = await get_or_create_user(user_id, workspace.id, db)
         if not user:
             return {
                 "response_type": "ephemeral",
-                "text": "❌ User not found. Please contact your administrator."
+                "text": "User not found. Please contact your administrator."
             }
 
         # CRITICAL: Commit the user creation before calling Celery task
@@ -462,10 +494,10 @@ async def handle_ask_command(
             }
 
         # Process the query asynchronously
-        from ...workers.simplified_celery_app import celery_app
+        from ...workers.celery_app import celery_app
 
         task_result = celery_app.send_task(
-            'app.workers.simple_query_processor.process_query_async',
+            'app.workers.query_processor.process_query_async',
             args=[
                 None,  # query_id - will be generated
                 workspace.id,  # workspace_id
@@ -473,29 +505,45 @@ async def handle_ask_command(
                 channel_id,  # channel_id
                 text,  # query_text
                 response_url,  # response_url
-                True  # is_slash_command
+                True,  # is_slash_command
+                None  # thread_ts (not available for slash commands)
             ]
         )
 
         logger.info(f"Queued query processing task: {task_result.id}")
 
+        # React with eyes emoji to show we're processing (optional - may fail if scope missing)
+        slack_service = SlackService()
+        if workspace.tokens.get('access_token'):
+            try:
+                # For slash commands, we need to get the message timestamp differently
+                # We'll send a temporary message and react to it
+                temp_message = await slack_service.send_message(
+                    channel=channel_id,
+                    text=f"Processing: *{text}*",
+                    token=workspace.tokens.get('access_token')
+                )
+                if temp_message and temp_message.get('ts'):
+                    await slack_service.add_reaction(
+                        channel=channel_id,
+                        timestamp=temp_message['ts'],
+                        name='eyes',
+                        token=workspace.tokens.get('access_token')
+                    )
+            except Exception as e:
+                logger.warning(f"Could not add reaction (missing scope?): {e}")
+
         # Return immediate acknowledgment
         return {
             "response_type": "in_channel",
-            "text": f"🤔 Processing your question: *{text}*\n\nI'm searching through our knowledge base...",
-            "attachments": [
-                {
-                    "text": "This may take a few seconds. I'll respond with the best answers I can find.",
-                    "color": "#36a64f"
-                }
-            ]
+            "text": f"Processing your question: *{text}*"
         }
 
     except Exception as e:
         logger.error("Error handling /ask command: {}", str(e), exc_info=True)
         return {
             "response_type": "ephemeral",
-            "text": "❌ Sorry, I encountered an error processing your request. Please try again in a moment."
+            "text": "Sorry, I encountered an error processing your request. Please try again in a moment."
         }
 
 
@@ -532,7 +580,7 @@ async def handle_slack_interactive(
             logger.error(f"Interaction processing error: {result['error']}")
             return {
                 "response_type": "ephemeral",
-                "text": f"❌ {result['error']}"
+                "text": f"Error: {result['error']}"
             }
 
         # Return the result (could be a message update, modal, etc.)
@@ -546,7 +594,7 @@ async def handle_slack_interactive(
         logger.error(f"Error handling interactive component: {e}", exc_info=True)
         return {
             "response_type": "ephemeral",
-            "text": "❌ Sorry, I encountered an error processing your interaction. Please try again."
+            "text": "Sorry, I encountered an error processing your interaction. Please try again."
         }
 
 
@@ -689,3 +737,220 @@ async def get_channel_messages(
     except Exception as e:
         logger.error("Error getting channel messages: {}", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+async def should_bot_respond_in_thread(
+    text: str,
+    thread_ts: Optional[str],
+    channel_id: str,
+    workspace_id: int,
+    db: AsyncSession
+) -> bool:
+    """
+    Enhanced thread detection logic for automatic bot participation.
+    
+    The bot will respond in threads where:
+    1. It has previously participated (was mentioned or responded)
+    2. No other users are mentioned in the current message
+    3. The message seems directed at the bot or is a relevant question
+    
+    This creates isolated context-aware conversations in threads.
+    """
+    try:
+        # Only respond in threads
+        if not thread_ts:
+            return False
+        
+        import re
+        text_lower = text.lower().strip()
+        
+        # Skip very short messages that are likely just reactions
+        if len(text_lower) < 3:
+            return False
+        
+        # Skip messages that are just emojis or reactions
+        if all(ord(char) > 127 for char in text_lower):  # All non-ASCII characters (likely emojis)
+            return False
+        
+        # Check if there are mentions of other users (avoid responding)
+        user_mentions = re.findall(r'<@[^>]+>', text)
+        if user_mentions:
+            # Get bot user ID from settings or use common patterns
+            from ...core.config import settings
+            bot_user_id = settings.slack_bot_user_id
+            
+            # If no bot user ID configured, try to detect bot mentions by common patterns
+            if not bot_user_id:
+                # Look for common bot mention patterns
+                bot_mention_patterns = [
+                    r'<@reno>',  # Direct @reno mention
+                    r'<@reno_bot>',  # @reno_bot mention
+                    r'<@reno-bot>',  # @reno-bot mention
+                ]
+                bot_mentioned = any(re.search(pattern, text_lower) for pattern in bot_mention_patterns)
+            else:
+                # Check if any mentions are NOT the bot
+                bot_mentioned = False
+                for mention in user_mentions:
+                    # Extract user ID from mention (e.g., <@U1234567890> -> U1234567890)
+                    mentioned_user_id = mention[2:-1]  # Remove <@ and >
+                    if mentioned_user_id == bot_user_id:
+                        bot_mentioned = True
+                        break
+                
+                # If bot is mentioned, check if other users are also mentioned
+                if bot_mentioned:
+                    for mention in user_mentions:
+                        mentioned_user_id = mention[2:-1]
+                        if mentioned_user_id != bot_user_id:
+                            logger.info(f"Message mentions both bot and other user {mentioned_user_id}, skipping bot response")
+                            return False
+            
+            # If other users are mentioned but not the bot, skip
+            if not bot_mentioned:
+                logger.info(f"Message mentions other users but not bot, skipping response")
+                return False
+        
+        # Check if the bot has previously participated in this thread
+        from ...models.base import Message, Conversation
+        
+        # Get the conversation for this channel
+        conversation_result = await db.execute(
+            select(Conversation).where(
+                and_(
+                    Conversation.workspace_id == workspace_id,
+                    Conversation.slack_channel_id == channel_id
+                )
+            )
+        )
+        conversation = conversation_result.scalar_one_or_none()
+        
+        if not conversation:
+            return False
+        
+        # Check if bot has sent messages in this thread OR was mentioned in this thread
+        bot_participation_result = await db.execute(
+            select(Message).where(
+                and_(
+                    Message.conversation_id == conversation.id,
+                    Message.message_metadata['slack_thread_ts'].astext == thread_ts,
+                    # Bot messages OR messages that mention the bot
+                    or_(
+                        Message.slack_user_id.like('%APP%'),  # Bot messages typically have APP in user_id
+                        Message.content.ilike('%@reno%'),  # Messages mentioning @reno
+                        Message.content.ilike('%<@reno>%'),  # Messages mentioning <@reno>
+                        Message.content.ilike('%reno%')  # Messages containing "reno" (broader match)
+                    )
+                )
+            ).limit(1)
+        )
+        bot_has_participated = bot_participation_result.scalar_one_or_none() is not None
+        
+        if not bot_has_participated:
+            logger.info(f"Bot has not participated in thread {thread_ts}, skipping response")
+            return False
+        
+        # Enhanced question and conversational patterns
+        question_patterns = [
+            r'\?+',  # Question marks
+            r'\b(what|how|when|where|why|who|which)\b',  # Question words
+            r'\b(can you|could you|would you|please)\b',  # Polite requests
+            r'\b(help|assist|support)\b',  # Help requests
+            r'\b(explain|describe|tell me|show me)\b',  # Information requests
+            r'\b(what about|how about|what if)\b',  # Follow-up questions
+            r'\b(any idea|any thoughts|suggestions)\b',  # Seeking input
+            r'\b(update|status|progress)\b',  # Status inquiries
+        ]
+        
+        conversational_patterns = [
+            r'\b(thanks?|thank you|thx)\b',
+            r'\b(ok|okay|got it|understood)\b',
+            r'\b(yes|no|correct|right|wrong)\b',
+            r'\b(agree|disagree|exactly|precisely)\b',
+            r'\b(more|less|additional|further)\b',
+            r'\b(clear|unclear|confusing|helpful)\b',
+            r'\b(perfect|great|awesome|excellent)\b',  # Positive feedback
+            r'\b(interesting|good point|makes sense)\b',  # Acknowledgment
+            r'\b(what else|anything else|other options)\b',  # Seeking more info
+        ]
+        
+        # Check for direct bot address patterns
+        direct_address_patterns = [
+            r'\b(reno|bot)\b',  # Direct mention of reno or bot
+            r'\b(you|your)\b',  # Direct address
+            r'\b(this|that)\b',  # Referring to bot's previous response
+        ]
+        
+        is_question = any(re.search(pattern, text_lower) for pattern in question_patterns)
+        is_conversational = any(re.search(pattern, text_lower) for pattern in conversational_patterns)
+        is_direct_address = any(re.search(pattern, text_lower) for pattern in direct_address_patterns)
+        
+        # Decision logic for responding
+        if is_question:
+            logger.info(f"Message appears to be a question in bot's thread: {text}")
+            return True
+        
+        if is_conversational:
+            logger.info(f"Message appears to be conversational response in bot's thread: {text}")
+            return True
+        
+        if is_direct_address:
+            logger.info(f"Message appears to directly address the bot: {text}")
+            return True
+        
+        # For other messages, be more conservative but still allow some responses
+        # Only respond if the message seems substantial and relevant
+        if len(text_lower.split()) >= 4:  # At least 4 words for more substantial messages
+            # Check for technical or work-related content that might be relevant
+            work_indicators = [
+                r'\b(deploy|deployment|build|test|fix|bug|issue|problem)\b',
+                r'\b(database|server|api|service|system)\b',
+                r'\b(meeting|discussion|decision|plan|strategy)\b',
+                r'\b(code|programming|development|engineering)\b',
+                r'\b(project|task|work|job|assignment)\b',
+            ]
+            
+            has_work_content = any(re.search(pattern, text_lower) for pattern in work_indicators)
+            
+            if has_work_content:
+                logger.info(f"Message in bot's thread contains work-related content: {text}")
+                return True
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error checking if bot should respond in thread: {e}")
+        return False
+
+
+async def update_conversation_metadata(conversation_id: int, db: AsyncSession):
+    """Update conversation metadata with current message count and participant count."""
+    try:
+        # Count messages in this conversation
+        message_count_result = await db.execute(
+            select(func.count(Message.id)).where(Message.conversation_id == conversation_id)
+        )
+        message_count = message_count_result.scalar() or 0
+        
+        # Count unique participants in this conversation
+        participant_count_result = await db.execute(
+            select(func.count(distinct(Message.slack_user_id))).where(Message.conversation_id == conversation_id)
+        )
+        participant_count = participant_count_result.scalar() or 0
+        
+        # Update conversation
+        from ...models.base import Conversation
+        conversation_result = await db.execute(
+            select(Conversation).where(Conversation.id == conversation_id)
+        )
+        conversation = conversation_result.scalar_one_or_none()
+        
+        if conversation:
+            conversation.message_count = message_count
+            conversation.participant_count = participant_count
+            await db.commit()
+            logger.info(f"Updated conversation {conversation_id} metadata: {message_count} messages, {participant_count} participants")
+        
+    except Exception as e:
+        logger.error(f"Error updating conversation metadata for {conversation_id}: {e}")
+        await db.rollback()

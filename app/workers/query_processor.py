@@ -2,27 +2,25 @@
 
 import asyncio
 import json
-from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
-from loguru import logger
+from typing import Dict, Any, List, Optional
 
-from sqlalchemy import select, and_, func
+from loguru import logger
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.config import settings
-from ..models.base import Query, KnowledgeItem, User, Workspace
-from ..services.vector_service import VectorService
-from ..services.slack_service import SlackService
-from ..services.openai_service import OpenAIService
-from ..services.intent_classifier import IntentClassifier
-from ..services.suggestion_service import SuggestionService
-from ..services.security_service import SecurityService
-from ..services.context_resolver import ContextResolver
-from ..services.hallucination_preventer import HallucinationPreventer
-from ..services.conversational_intelligence import ConversationalIntelligence
-from ..services.direct_conversation_analyzer import DirectConversationAnalyzer
-from ..services.advanced_ai_intelligence import AdvancedAIIntelligence
 from .celery_app import celery_app
+from ..core.config import settings
+from ..models.base import Query, User, Workspace
+from ..services.hallucination_preventer import HallucinationPreventer
+from ..services.intent_classifier import IntentClassifier, IntentClassificationResult
+from ..services.openai_service import OpenAIService
+from ..services.response_formatter import ResponseFormatter, ContentData
+from ..services.slack_service import SlackService
+from ..services.suggestion_service import SuggestionService
+from ..services.team_memory_engine import TeamMemoryEngine
+from ..services.vector_service import VectorService
+
 
 def get_async_session():
     """Create a new async session for each task."""
@@ -41,7 +39,8 @@ def process_query_async(
     channel_id: str,
     query_text: str,
     response_url: Optional[str] = None,
-    is_slash_command: bool = False
+    is_slash_command: bool = False,
+    thread_ts: Optional[str] = None
 ):
     """Process a user query and generate a response."""
     try:
@@ -60,7 +59,8 @@ def process_query_async(
                     channel_id=channel_id,
                     query_text=query_text,
                     response_url=response_url,
-                    is_slash_command=is_slash_command
+                    is_slash_command=is_slash_command,
+                    thread_ts=thread_ts
                 )
             )
             return result
@@ -78,35 +78,49 @@ async def process_query(
     channel_id: str,
     query_text: str,
     response_url: Optional[str] = None,
-    is_slash_command: bool = False
+    is_slash_command: bool = False,
+    thread_ts: Optional[str] = None
 ) -> Dict[str, Any]:
     """Process a user query and generate a response."""
     async_session = get_async_session()
     async with async_session() as db:
         try:
+            # Ensure we start with a clean transaction
+            await db.rollback()
             # Initialize services
-            security_service = SecurityService()
             intent_classifier = IntentClassifier()
             suggestion_service = SuggestionService()
-            context_resolver = ContextResolver()
             hallucination_preventer = HallucinationPreventer()
             
-            # 1. Context resolution - resolve references like "it", "the process", etc.
-            resolved_query, contextual_references = await context_resolver.resolve_query_context(
-                query=query_text.strip(),
-                user_id=user_id,
-                channel_id=channel_id,
-                workspace_id=workspace_id,
-                db=db
+            # 1. SMART context understanding with Team Memory Engine
+            memory_engine = TeamMemoryEngine()
+            query_context = await memory_engine.understand_query_context(
+                query_text.strip(),
+                user_id,
+                channel_id,
+                workspace_id,
+                db
             )
-            
-            logger.info(f"Original query: {query_text}")
-            if resolved_query != query_text.strip():
-                logger.info(f"Resolved query: {resolved_query}")
-                logger.info(f"Context references resolved: {len(contextual_references)}")
-            
-            # Use the resolved query for processing
-            sanitized_query = resolved_query
+
+            # Use the context-enhanced query
+            sanitized_query = query_context.get("resolved_query", query_text.strip())
+            context_confidence = query_context.get("context_confidence", 0.3)
+
+            logger.info(f"Smart Context Analysis:")
+            logger.info(f"  Original query: {query_text}")
+            logger.info(f"  Context confidence: {context_confidence:.2f}")
+            logger.info(f"  Resolved query: {sanitized_query}")
+
+            if query_context.get("implicit_references"):
+                refs = [f"{r.original_text} → {r.resolved_reference}" for r in query_context["implicit_references"]]
+                logger.info(f"  Resolved references: {refs}")
+
+            if query_context.get("relevant_projects"):
+                projects = [p.name for p in query_context["relevant_projects"]]
+                logger.info(f"  Relevant projects: {projects}")
+
+            # Use enhanced search terms for better knowledge retrieval
+            enhanced_search_terms = query_context.get("suggested_search_terms", [sanitized_query])
             
             # 2. Get Slack user ID and analyze conversational intelligence
             user_result = await db.execute(
@@ -115,16 +129,7 @@ async def process_query(
             user = user_result.scalar_one_or_none()
             slack_user_id = user.slack_id if user else "unknown"
             
-            conv_intelligence = ConversationalIntelligence()
-            context_analysis = await conv_intelligence.analyze_query_context(
-                query=sanitized_query,
-                user_id=slack_user_id,
-                channel_id=channel_id,
-                workspace_id=workspace_id,
-                db=db
-            )
-            
-            logger.info(f"Conversational intelligence analysis: {context_analysis.get('intelligence_level', 'basic')}")
+            logger.info("Using basic conversational intelligence analysis")
             
             # Check if this query requires advanced AI intelligence
             advanced_indicators = [
@@ -163,192 +168,14 @@ async def process_query(
                     is_advanced_query = True
                     logger.info("Detected complex query through fallback intelligence detection")
             
-            # Use Advanced AI Intelligence for sophisticated queries
+            # Advanced queries - simplified fallback since advanced AI service doesn't exist
             if is_advanced_query and not is_temporal_query:
-                logger.info("Detected advanced query requiring sophisticated AI analysis")
-                
-                # Initialize Advanced AI Intelligence
-                advanced_ai = AdvancedAIIntelligence()
-                
-                # Prepare comprehensive context data
-                context_data = {
-                    "conversational_intelligence": context_analysis,
-                    "user_info": {"user_id": user_id, "slack_id": slack_user_id},
-                    "channel_info": {"channel_id": channel_id},
-                    "query_metadata": {
-                        "original_query": query_text,
-                        "resolved_query": sanitized_query,
-                        "contextual_references": contextual_references
-                    }
-                }
-                
-                # Get sophisticated AI analysis and response
-                advanced_result = await advanced_ai.analyze_and_respond(
-                    query=sanitized_query,
-                    context_data=context_data,
-                    workspace_id=workspace_id,
-                    user_id=user_id,
-                    channel_id=channel_id,
-                    db=db
-                )
-                
-                if advanced_result["status"] == "success":
-                    # Create a query record for advanced processing
-                    advanced_query = Query(
-                        workspace_id=workspace_id,
-                        user_id=user_id,
-                        text=sanitized_query,
-                        response={},
-                        created_at=datetime.utcnow()
-                    )
-                    db.add(advanced_query)
-                    await db.flush()
-                    advanced_query_id = advanced_query.id
-                    
-                    # Format sophisticated AI response
-                    ai_response = advanced_result["response"]
-                    intelligence_metrics = advanced_result.get("intelligence_metrics", {})
-                    
-                    response_text = f"🧠 **Intelligent Analysis**\n\n{ai_response['response_text']}"
-                    
-                    # Add intelligence indicators if high sophistication
-                    if intelligence_metrics.get("response_sophistication", 0) > 0.8:
-                        response_text += f"\n\n*Analysis Mode: {advanced_result.get('reasoning_mode', 'analytical').title()}*"
-                        response_text += f"\n*Complexity Score: {intelligence_metrics.get('complexity_score', 0.5):.1f}/1.0*"
-                    
-                    slack_response = {
-                        "response_type": "in_channel",
-                        "text": response_text,
-                        "blocks": [
-                            {
-                                "type": "section",
-                                "text": {
-                                    "type": "mrkdwn",
-                                    "text": response_text
-                                }
-                            }
-                        ]
-                    }
-                    
-                    # Store the advanced response
-                    advanced_query.response = {
-                        "query_text": sanitized_query,
-                        "original_query": query_text,
-                        "analysis_type": "advanced_ai_intelligence",
-                        "reasoning_mode": advanced_result.get("reasoning_mode"),
-                        "intelligence_metrics": intelligence_metrics,
-                        "response_text": response_text,
-                        "generated_at": datetime.utcnow().isoformat()
-                    }
-                    
-                    await db.commit()
-                    
-                    # Send sophisticated response immediately
-                    if response_url:
-                        await send_slack_response(response_url, slack_response)
-                    
-                    if is_slash_command:
-                        await send_channel_response(channel_id, workspace_id, slack_response)
-                    
-                    logger.info(f"Successfully processed advanced query {advanced_query_id} with {advanced_result.get('reasoning_mode')} reasoning")
-                    return {
-                        "status": "success",
-                        "query_id": advanced_query_id,
-                        "response": slack_response,
-                        "analysis_type": "advanced_ai_intelligence",
-                        "reasoning_mode": advanced_result.get("reasoning_mode")
-                    }
-            
-            is_temporal_query = any(indicator in sanitized_query.lower() for indicator in temporal_indicators)
+                logger.info("Detected advanced query - using standard processing")
+                # Fall through to standard processing below
             
             if is_temporal_query:
-                logger.info("Detected temporal query, using direct conversation analysis")
-                
-                # Use direct conversation analyzer for temporal queries
-                analyzer = DirectConversationAnalyzer()
-                
-                # Determine time range based on query
-                hours_back = 24  # Default to today
-                if "this morning" in sanitized_query.lower():
-                    hours_back = 12
-                elif "last hour" in sanitized_query.lower() or "recently" in sanitized_query.lower():
-                    hours_back = 2
-                elif "yesterday" in sanitized_query.lower():
-                    hours_back = 48
-                
-                direct_analysis = await analyzer.analyze_recent_discussions(
-                    query=sanitized_query,
-                    workspace_id=workspace_id,
-                    channel_id=channel_id,
-                    db=db,
-                    hours_back=hours_back
-                )
-                
-                if direct_analysis["status"] == "success":
-                    # Create a temporary query record for temporal queries
-                    temp_query = Query(
-                        workspace_id=workspace_id,
-                        user_id=user_id,
-                        text=sanitized_query,
-                        response={},
-                        created_at=datetime.utcnow()
-                    )
-                    db.add(temp_query)
-                    await db.flush()
-                    temp_query_id = temp_query.id
-                    
-                    # Format direct analysis result for response
-                    analysis_result = direct_analysis["analysis"]
-                    
-                    response_text = f"📋 **Recent Discussions Analysis**\n\n{analysis_result['analysis']}\n\n**Time Range:** {analysis_result['time_span']}\n**Conversations Analyzed:** {analysis_result['conversations_count']}"
-                    
-                    if analysis_result.get("channels_involved"):
-                        response_text += f"\n**Channels:** {', '.join(analysis_result['channels_involved'])}"
-                    
-                    if analysis_result.get("participants"):
-                        response_text += f"\n**Participants:** {', '.join(analysis_result['participants'])}"
-                    
-                    slack_response = {
-                        "response_type": "in_channel",
-                        "text": response_text,
-                        "blocks": [
-                            {
-                                "type": "section",
-                                "text": {
-                                    "type": "mrkdwn",
-                                    "text": response_text
-                                }
-                            }
-                        ]
-                    }
-                    
-                    # Store the response
-                    temp_query.response = {
-                        "query_text": sanitized_query,
-                        "original_query": query_text,
-                        "analysis_type": "direct_temporal",
-                        "time_range_hours": hours_back,
-                        "conversations_analyzed": direct_analysis["conversations_analyzed"],
-                        "response_text": response_text,
-                        "generated_at": datetime.utcnow().isoformat()
-                    }
-                    
-                    await db.commit()
-                    
-                    # Send response immediately for temporal queries
-                    if response_url:
-                        await send_slack_response(response_url, slack_response)
-                    
-                    if is_slash_command:
-                        await send_channel_response(channel_id, workspace_id, slack_response)
-                    
-                    logger.info(f"Successfully processed temporal query {temp_query_id} with direct analysis")
-                    return {
-                        "status": "success",
-                        "query_id": temp_query_id,
-                        "response": slack_response,
-                        "analysis_type": "direct_temporal"
-                    }
+                logger.info("Detected temporal query - using standard processing")
+                # Fall through to standard processing below
             
             # Create or get the query record
             if query_id is None:
@@ -370,114 +197,210 @@ async def process_query(
                 if not query:
                     raise ValueError(f"Query {query_id} not found")
             
-            # 2. Start knowledge search immediately (don't wait for intent)
-            vector_service = VectorService()
-            search_task = vector_service.hybrid_search(
-                query=sanitized_query,
-                workspace_id=workspace_id,
-                channel_id=channel_id,
-                limit=5,
-                db=db
-            )
-            
-            # 3. Run intent classification in parallel with search
+            # 2. Run intent classification first to determine if search is needed
             import asyncio
             try:
-                # Run both operations in parallel with timeout
-                search_results, intent_analysis = await asyncio.wait_for(
-                    asyncio.gather(
-                        search_task,
-                        intent_classifier.classify_intent(sanitized_query),
-                        return_exceptions=True
+                intent_result = await asyncio.wait_for(
+                    intent_classifier.classify_intent(
+                        message_text=sanitized_query,
+                        user_id=slack_user_id,
+                        channel_id=channel_id,
+                        workspace_id=workspace_id,
+                        thread_ts=None,  # Could be extracted from context if available
+                        db=db
                     ),
-                    timeout=3.0  # 3 second timeout
+                    timeout=2.0  # 2 second timeout for intent classification
                 )
                 
-                # Handle exceptions
-                if isinstance(search_results, Exception):
-                    logger.error(f"Search failed: {search_results}")
-                    search_results = []
-                if isinstance(intent_analysis, Exception):
-                    logger.error(f"Intent classification failed: {intent_analysis}")
-                    intent_analysis = {"intent": "general_info", "confidence": 0.5}
-                    
             except asyncio.TimeoutError:
-                logger.warning("Search/intent classification timed out, using fallbacks")
-                search_results = []
-                intent_analysis = {"intent": "general_info", "confidence": 0.5}
+                logger.warning("Intent classification timed out, defaulting to knowledge query")
+                intent_result = IntentClassificationResult(
+                    intent="knowledge_query",
+                    confidence=0.3,
+                    classification_method="timeout_fallback",
+                    contextual_metadata={},
+                    entities=[],
+                    temporal_scope=None,
+                    is_conversational_response=False,
+                    requires_knowledge_search=True
+                )
+            except Exception as e:
+                logger.error(f"Intent classification failed: {e}")
+                intent_result = IntentClassificationResult(
+                    intent="knowledge_query",
+                    confidence=0.5,
+                    classification_method="fallback",
+                    contextual_metadata={},
+                    entities=[],
+                    temporal_scope=None,
+                    is_conversational_response=False,
+                    requires_knowledge_search=True
+                )
+            
+            # 3. Smart knowledge search - only when actually needed
+            search_results = []
+            should_search_knowledge = (
+                intent_result.requires_knowledge_search or
+                (intent_result.intent == "social_interaction" and len(sanitized_query.split()) > 5) or  # Only complex social interactions
+                (intent_result.intent not in ["social_interaction", "ignore"] and len(sanitized_query.split()) > 3)  # Non-social substantial queries
+            )
+
+            if should_search_knowledge:
+                try:
+                    vector_service = VectorService()
+
+                    # Use enhanced search with multiple terms from context analysis
+                    all_search_results = []
+
+                    for search_term in enhanced_search_terms[:3]:  # Top 3 search terms
+                        logger.info(f"Searching with enhanced term: {search_term}")
+                        term_results = await asyncio.wait_for(
+                            vector_service.hybrid_search(
+                                query=search_term,
+                                workspace_id=workspace_id,
+                                channel_id=channel_id,
+                                limit=3,  # Fewer per term, but multiple terms
+                                db=db
+                            ),
+                            timeout=2.0  # 2 second timeout per search
+                        )
+                        all_search_results.extend(term_results)
+
+                    # Remove duplicates and keep top results
+                    seen_ids = set()
+                    search_results = []
+                    for result in all_search_results:
+                        if hasattr(result, 'id') and result.id not in seen_ids:
+                            seen_ids.add(result.id)
+                            search_results.append(result)
+                        elif not hasattr(result, 'id'):
+                            search_results.append(result)
+
+                        if len(search_results) >= 8:  # Max 8 total results
+                            break
+                except asyncio.TimeoutError:
+                    logger.warning("Knowledge search timed out")
+                    search_results = []
+                except Exception as e:
+                    logger.error(f"Knowledge search failed: {e}")
+                    search_results = []
             
             logger.info(f"Found {len(search_results)} relevant knowledge items")
-            logger.info(f"Intent: {intent_analysis.get('intent', 'unknown')} (confidence: {intent_analysis.get('confidence', 0):.2f})")
+            logger.info(f"Intent: {intent_result.intent} (confidence: {intent_result.confidence:.2f})")
             
-            # 4. Generate AI response and suggestions in parallel
-            try:
-                ai_response, suggestions = await asyncio.wait_for(
-                    asyncio.gather(
-                        generate_enhanced_ai_response(sanitized_query, search_results, intent_analysis, context_analysis, db),
-                        suggestion_service.generate_suggestions(
-                            query=sanitized_query,
-                            search_results=search_results,
-                            intent_analysis=intent_analysis
+            # 4. Generate AI response and suggestions in parallel (for all substantial queries)
+            ai_response = None
+            suggestions = []
+
+            # Enhanced analysis including Team Memory context
+            intent_analysis = {
+                "intent": intent_result.intent,
+                "confidence": intent_result.confidence,
+                "entities": intent_result.entities,
+                "temporal_scope": intent_result.temporal_scope
+            }
+
+            # Enhanced context analysis with Team Memory intelligence
+            enhanced_context_analysis = {
+                "intelligence_level": "advanced" if context_confidence > 0.6 else "basic",
+                "conversation_context": query_context.get("team_context", {}),
+                "user_intent": intent_result.intent,
+                "context_confidence": context_confidence,
+                "resolved_references": query_context.get("implicit_references", []),
+                "relevant_projects": query_context.get("relevant_projects", []),
+                "user_perspective": query_context.get("user_perspective", {}),
+                "smart_analysis": True  # Flag to use enhanced prompts
+            }
+
+            if should_search_knowledge:
+                try:
+                    
+                    ai_response, suggestions = await asyncio.wait_for(
+                        asyncio.gather(
+                            generate_enhanced_ai_response(sanitized_query, search_results, intent_analysis, enhanced_context_analysis, db),
+                            suggestion_service.generate_suggestions(
+                                query=sanitized_query,
+                                search_results=search_results,
+                                intent_analysis=intent_analysis
+                            ),
+                            return_exceptions=True
                         ),
-                        return_exceptions=True
-                    ),
-                    timeout=4.0  # 4 second timeout for AI calls
+                        timeout=5.0  # 5 second timeout for enhanced AI calls
+                    )
+                    
+                    # Handle exceptions
+                    if isinstance(ai_response, Exception):
+                        logger.error(f"AI response generation failed: {ai_response}")
+                        ai_response = await generate_ai_response(sanitized_query, search_results)
+                    if isinstance(suggestions, Exception):
+                        logger.error(f"Suggestion generation failed: {suggestions}")
+                        suggestions = []
+                        
+                except asyncio.TimeoutError:
+                    logger.warning("AI response/suggestions timed out, using basic response")
+                    ai_response = await generate_ai_response(sanitized_query, search_results)
+                    suggestions = []
+            else:
+                # For non-knowledge queries, create appropriate response
+                ai_response = await _create_non_knowledge_response(intent_result, sanitized_query)
+            
+            # 5. Format the response for Slack
+            if should_search_knowledge:
+                # Use new ResponseFormatter for all substantial queries
+                response_formatter = ResponseFormatter()
+                
+                # Convert AI response to ContentData format
+                content_data = await _convert_to_content_data(
+                    ai_response, search_results, suggestions, intent_result
                 )
                 
-                # Handle exceptions
-                if isinstance(ai_response, Exception):
-                    logger.error(f"AI response generation failed: {ai_response}")
-                    ai_response = await generate_ai_response(sanitized_query, search_results)
-                if isinstance(suggestions, Exception):
-                    logger.error(f"Suggestion generation failed: {suggestions}")
-                    suggestions = []
-                    
-            except asyncio.TimeoutError:
-                logger.warning("AI response/suggestions timed out, using basic response")
-                ai_response = await generate_ai_response(sanitized_query, search_results)
-                suggestions = []
-            
-            # 5. Format the enhanced response for Slack
-            slack_response = await format_enhanced_slack_response(
-                sanitized_query, 
-                search_results, 
-                ai_response, 
-                suggestions,
-                intent_analysis,
-                query_id,
-                context_analysis,
-                db
-            )
+                # Format response using new system
+                slack_response = await response_formatter.format_response(
+                    content_data=content_data,
+                    intent_result=intent_result,
+                    query_text=sanitized_query,
+                    query_id=query_id
+                )
+            else:
+                # For non-knowledge queries, use simple response format
+                slack_response = {
+                    "response_type": "in_channel",
+                    "text": ai_response.get("response", "I'm here to help!"),
+                    "blocks": [
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": ai_response.get("response", "I'm here to help!")
+                            }
+                        }
+                    ]
+                }
             
             logger.info(f"Slack response structure: {slack_response}")
             logger.info(f"Slack response type: {type(slack_response)}")
             
-            # Store the enhanced response
-            query.response = {
-                "query_text": sanitized_query,
-                "original_query": query_text,
-                "resolved_query": resolved_query if resolved_query != query_text.strip() else None,
-                "contextual_references": [
-                    {
-                        "original_term": ref.original_term,
-                        "resolved_entity": ref.resolved_entity,
-                        "confidence": ref.confidence,
-                        "resolution_type": ref.resolution_type
-                    }
-                    for ref in contextual_references
-                ],
-                "search_results_count": len(search_results),
-                "ai_response": ai_response,
-                "intent_analysis": intent_analysis,
-                "suggestions": suggestions,
-                "processed_at": datetime.utcnow().isoformat(),
-                "is_slash_command": is_slash_command,
-                "processing_time": "optimized_parallel"
-            }
-            
-            logger.info("About to commit to database")
-            await db.commit()
-            logger.info("Database commit successful")
+            # Store the enhanced response (with error handling)
+            try:
+                query.response = {
+                    "query_text": sanitized_query,
+                    "original_query": query_text,
+                    "resolved_query": sanitized_query if sanitized_query != query_text.strip() else None,
+                    "search_results_count": len(search_results),
+                    "ai_response": ai_response,
+                    "intent_analysis": intent_analysis,
+                    "suggestions": suggestions,
+                    "processed_at": datetime.utcnow().isoformat(),
+                    "is_slash_command": is_slash_command,
+                    "processing_time": "optimized_parallel"
+                }
+                
+                logger.info("About to commit to database")
+                await db.commit()
+                logger.info("Database commit successful")
+            except Exception as db_error:
+                logger.error(f"Database save failed, but continuing with response: {db_error}")
+                # Don't re-raise the error - we still want to send the response to Slack
             
             # Send response to Slack if we have a response URL
             logger.info(f"Response URL: {response_url}")
@@ -485,10 +408,9 @@ async def process_query(
                 logger.info("Sending response to Slack via response URL")
                 await send_slack_response(response_url, slack_response)
             
-            # If it's a slash command, also send to the channel
-            if is_slash_command:
-                logger.info("Sending response to Slack channel")
-                await send_channel_response(channel_id, workspace_id, slack_response)
+            # Always send response to the channel (for both @mentions and slash commands)
+            logger.info(f"Sending response to Slack channel {channel_id} with thread_ts: {thread_ts}")
+            await send_channel_response(channel_id, workspace_id, slack_response, thread_ts)
             
             logger.info(f"Successfully processed query {query_id}")
             
@@ -501,18 +423,23 @@ async def process_query(
             
         except Exception as e:
             logger.error("Error processing query: {}", str(e), exc_info=True)
-            await db.rollback()
+            try:
+                await db.rollback()
+            except Exception as rollback_error:
+                logger.error("Error during rollback: {}", str(rollback_error))
             
-            # Send error response to Slack
-            error_response = {
-                "response_type": "ephemeral",
-                "text": "❌ Sorry, I encountered an error processing your question. Please try again in a moment."
-            }
-            
-            if response_url:
-                await send_slack_response(response_url, error_response)
-            
-            if is_slash_command:
+            # Only send error response if we haven't already sent a successful response
+            # Check if we have a successful response ready
+            if 'slack_response' not in locals():
+                error_response = {
+                    "response_type": "ephemeral",
+                    "text": "Sorry, I encountered an error processing your question. Please try again in a moment."
+                }
+                
+                if response_url:
+                    await send_slack_response(response_url, error_response)
+                
+                # Always send error response to the channel
                 await send_channel_response(channel_id, workspace_id, error_response)
             
             raise
@@ -539,28 +466,72 @@ async def generate_enhanced_ai_response(
                 "type": result.get("type", "unknown")
             })
         
-        # Use intelligent prompt if context analysis is available
-        if context_analysis and context_analysis.get("intelligence_level") in ["high", "medium"]:
-            conv_intelligence = ConversationalIntelligence()
-            system_prompt = await conv_intelligence.generate_intelligent_response_prompt(
-                query, search_results, context_analysis, db
-            )
-        else:
-            # Create intent-aware system prompt
+        # Enhanced prompt with Team Memory Engine context
+        if context_analysis and context_analysis.get("smart_analysis"):
+            # Create SUPER-SMART system prompt with full context
             intent = intent_analysis.get("intent", "general_info")
-            entities = intent_analysis.get("entities", {})
-            scope = intent_analysis.get("scope", "general")
-            
-            system_prompt = f"""You are a team knowledge assistant who provides SPECIFIC, ACTIONABLE answers from your team's conversation history.
+            entities = intent_analysis.get("entities", [])
+            scope = intent_analysis.get("temporal_scope", "general")
 
-DETECTED INTENT: {intent}
-SCOPE: {scope}
-ENTITIES: {entities}
+            # Extract Team Memory context
+            resolved_refs = context_analysis.get("resolved_references", [])
+            relevant_projects = context_analysis.get("relevant_projects", [])
+            user_perspective = context_analysis.get("user_perspective", {})
+            context_confidence = context_analysis.get("context_confidence", 0.0)
 
-🎯 YOUR MISSION:
+            # Build context strings
+            references_str = ""
+            if resolved_refs:
+                refs = [f"'{ref.original_text}' refers to '{ref.resolved_reference}'" for ref in resolved_refs]
+                references_str = f"\nRESOLVED REFERENCES: {'; '.join(refs)}"
+
+            projects_str = ""
+            if relevant_projects:
+                project_names = [p.name for p in relevant_projects]
+                projects_str = f"\nRELEVANT PROJECTS: {', '.join(project_names)}"
+
+            user_context_str = f"\nUSER CONTEXT: {user_perspective.get('involvement_level', 'participant')}"
+
+            system_prompt = f"""You are an ADVANCED team knowledge assistant with perfect memory of all team conversations.
+
+You understand context like a brilliant teammate who remembers everything and connects the dots.
+
+CONTEXT ANALYSIS:
+- Intent: {intent}
+- Confidence: {context_confidence:.2f}
+- Temporal Scope: {scope}
+- Entities: {entities}{references_str}{projects_str}{user_context_str}
+
+YOUR ADVANCED CAPABILITIES:
+- You understand implicit references ("it", "that process", "the migration")
+- You connect conversations across different time periods
+- You know who's working on what projects
+- You remember decisions and their outcomes
+- You provide context about why things were decided
+
+CRITICAL: EXTRACT TECHNICAL DETAILS FROM RAW MESSAGE CONTENT:
+When you see conversation search results with raw message content, you MUST:
+1. Look for specific commands, scripts, procedures in the raw message text
+2. Extract exact syntax, file names, command flags, and technical specifications
+3. Include code snippets, configuration details, and step-by-step procedures
+4. Don't just summarize - provide the actual technical content verbatim
+
+SPECIAL INSTRUCTION FOR CONVERSATION RESULTS:
+If you see results with type:"conversation" containing raw Slack message content, these contain the ACTUAL detailed responses from team members. Extract the specific technical information from these messages, including:
+- Command examples (pg_dump, scripts, etc.)
+- Code blocks marked with ```
+- Specific procedures and steps
+- File names and configurations
+- Error messages and solutions
+
+Example: If you see a conversation result containing "pg_dump --jobs=4 --format=directory", include this EXACT command in your response.
+
+SUPER-SMART RESPONSE REQUIREMENTS:
+
+YOUR MISSION:
 Transform stored knowledge into immediately useful answers that help the user take action or understand exactly what happened.
 
-📋 RESPONSE REQUIREMENTS:
+RESPONSE REQUIREMENTS:
 
 For DECISIONS:
 - What exactly was decided?
@@ -582,59 +553,78 @@ For PROCESSES:
 - Who is responsible for each step?
 - What are the success criteria?
 
-🔍 RESPONSE QUALITY STANDARDS:
+RESPONSE QUALITY STANDARDS:
 - LEAD WITH THE ANSWER: Start with the specific information they need
 - INCLUDE SPECIFICS: Names, dates, tools, exact steps, reasoning
 - PROVIDE CONTEXT: Why this matters, what led to this decision
 - CITE SOURCES: Who said what and when
 - SUGGEST NEXT STEPS: What the user should do with this information
 
-❌ AVOID VAGUE RESPONSES:
-- "The team discussed database migration" → TOO VAGUE
-- "There was a conversation about this topic" → USELESS
-- "Some decisions were made" → UNHELPFUL
+AVOID VAGUE RESPONSES:
+- "The team discussed database migration" -> TOO VAGUE
+- "There was a conversation about this topic" -> USELESS
+- "Some decisions were made" -> UNHELPFUL
 
-✅ PROVIDE RICH RESPONSES:
+PROVIDE RICH RESPONSES:
 - "John (Senior Engineer) decided on March 15th to migrate from MySQL to PostgreSQL because of better JSON support needed for the new analytics features. Timeline: Migration by end of Q2. Next steps: John is creating the migration plan by March 22nd, Sarah is reviewing infrastructure requirements."
 
-🏷️ SOURCE ATTRIBUTION:
+SOURCE ATTRIBUTION:
 Always include:
 - WHO provided the information (with their role if available)
 - WHEN the conversation happened
-- WHICH channel or thread this came from
-- Links to original discussions when possible
+- WHICH channel or thread this came from"""
+        else:
+            # Fallback to basic smart prompt
+            system_prompt = """You are a team knowledge assistant who provides SPECIFIC, ACTIONABLE answers from your team's conversation history.
+
+YOUR MISSION:
+Transform stored knowledge into immediately useful answers with specific details, not vague summaries.
+
+RESPONSE REQUIREMENTS:
+- LEAD WITH THE ANSWER: Start with the specific information they need
+- INCLUDE SPECIFICS: Names, dates, tools, exact steps, reasoning
+- PROVIDE CONTEXT: Why this matters, what led to this decision
+- CITE SOURCES: Who said what and when
+- SUGGEST NEXT STEPS: What the user should do with this information
 
 IMPORTANT RULES:
 1. Extract ALL relevant details from the knowledge items
 2. If knowledge is incomplete, specify exactly what's missing
 3. Prioritize actionable information over background
 4. Use direct quotes when they add value
-5. Connect related pieces of knowledge when relevant
-6. Tailor depth to the user's intent: {intent}"""
+5. Connect related pieces of knowledge when relevant"""
 
         user_message = f"""Question: {query}
 
-Available Knowledge:
+Available Knowledge (including raw conversation messages that may contain specific technical details):
 {json.dumps(context, indent=2)}
 
-Please provide a helpful answer based on this knowledge. If the knowledge is insufficient, say so clearly."""
+CRITICAL INSTRUCTION:
+The data above includes conversation search results from Slack messages. These messages contain the ACTUAL technical responses from team members with specific details like:
+- Exact command line syntax
+- Code snippets in ``` blocks
+- Script names and file paths
+- Configuration changes
+- Step-by-step procedures
 
-        # Generate response
+You MUST extract and present these technical details verbatim. Do not just say "changes are needed" - show the EXACT changes, commands, and procedures that were discussed."""
+
+        # Generate enhanced response with technical detail extraction
         response = await openai_service._make_request(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",  # Use GPT-4o-mini for better technical understanding
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ],
-            temperature=0.3,
-            max_tokens=500
+            temperature=0.2,  # Lower temperature for precise technical responses
+            max_completion_tokens=2000  # Much more tokens for detailed technical responses
         )
         
         content = response['choices'][0]['message']['content']
         
         return {
             "response": content,
-            "model_used": "gpt-3.5-turbo",
+            "model_used": "gpt-4o-mini",
             "generated_at": datetime.utcnow().isoformat(),
             "context_used": len(context),
             "intent_aware": True
@@ -668,23 +658,23 @@ async def generate_ai_response(query: str, search_results: List[Dict[str, Any]])
             })
         
         # Create prompt for AI response
-        system_prompt = """You are a team knowledge assistant who provides SPECIFIC, ACTIONABLE answers from your team's conversation history.
+        system_prompt = """You are a team knowledge assistant who provides SPECIFIC, ACTIONABLE answers from your teams conversation history.
 
-🎯 YOUR MISSION:
+YOUR MISSION:
 Transform stored knowledge into immediately useful answers with specific details, not vague summaries.
 
-📋 RESPONSE REQUIREMENTS:
+RESPONSE REQUIREMENTS:
 - LEAD WITH THE ANSWER: Start with the specific information they need
 - INCLUDE SPECIFICS: Names, dates, tools, exact steps, reasoning  
 - PROVIDE CONTEXT: Why this matters, what led to this decision
 - CITE SOURCES: Who said what and when
 - SUGGEST NEXT STEPS: What the user should do with this information
 
-❌ AVOID VAGUE RESPONSES:
-- "The team discussed database migration" → TOO VAGUE
-- "There was a conversation about this topic" → USELESS
+AVOID VAGUE RESPONSES:
+- "The team discussed database migration" -> TOO VAGUE
+- "There was a conversation about this topic" -> USELESS
 
-✅ PROVIDE RICH RESPONSES:
+PROVIDE RICH RESPONSES:
 - "John decided on March 15th to migrate from MySQL to PostgreSQL because of better JSON support needed for analytics. Timeline: Migration by end of Q2. Next steps: John is creating the migration plan by March 22nd."
 
 IMPORTANT RULES:
@@ -696,20 +686,28 @@ IMPORTANT RULES:
 
         user_message = f"""Question: {query}
 
-Available Knowledge:
+Available Knowledge (including raw conversation messages that may contain specific technical details):
 {json.dumps(context, indent=2)}
 
-Please provide a helpful answer based on this knowledge. If the knowledge is insufficient, say so clearly."""
+CRITICAL INSTRUCTION:
+The data above includes conversation search results from Slack messages. These messages contain the ACTUAL technical responses from team members with specific details like:
+- Exact command line syntax
+- Code snippets in ``` blocks
+- Script names and file paths
+- Configuration changes
+- Step-by-step procedures
 
-        # Generate response
+You MUST extract and present these technical details verbatim. Do not just say "changes are needed" - show the EXACT changes, commands, and procedures that were discussed."""
+
+        # Generate enhanced response with technical detail extraction
         response = await openai_service._make_request(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",  # Use GPT-4o-mini for better technical understanding
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ],
-            temperature=0.3,
-            max_tokens=500
+            temperature=0.2,  # Lower temperature for precise technical responses
+            max_completion_tokens=2000  # Much more tokens for detailed technical responses
         )
         
         content = response['choices'][0]['message']['content']
@@ -733,7 +731,7 @@ Please provide a helpful answer based on this knowledge. If the knowledge is ins
         
         return {
             "response": content,
-            "model_used": "gpt-3.5-turbo",
+            "model_used": "gpt-4o-mini",
             "generated_at": datetime.utcnow().isoformat(),
             "context_used": len(context),
             "hallucination_check": {
@@ -751,369 +749,6 @@ Please provide a helpful answer based on this knowledge. If the knowledge is ins
             "fallback": True
         }
 
-def _assess_response_quality(search_results: List[Dict[str, Any]], ai_response: Dict[str, Any], context_analysis: Optional[Dict[str, Any]] = None) -> str:
-    """Assess the quality of the response to determine formatting approach."""
-    # Check if AI response indicates it found useful information
-    ai_text = ai_response.get('response', '').lower()
-    
-    # If we have high intelligence context, this is likely a good response
-    if context_analysis and context_analysis.get("intelligence_level") == "high":
-        # Check if this is a follow-up or status response
-        if any(pattern in ai_text for pattern in ["follow-up", "status check", "what happened"]):
-            return "excellent"
-    
-    # First check for positive indicators - if AI provides specific information, it's good
-    positive_indicators = [
-        "decided", "decision", "team chose", "recommended", "agreed",
-        "timeline", "next steps", "action items", "responsible",
-        "because", "due to", "reasoning", "steps:", "procedure",
-        "solution", "approach", "method", "process"
-    ]
-    
-    has_positive_content = any(indicator in ai_text for indicator in positive_indicators)
-    
-    # Check for completely negative responses
-    complete_no_info_indicators = [
-        "i'm sorry, but the provided",
-        "couldn't find any",
-        "no information available",
-        "don't have information about",
-        "no discussions about",
-        "no relevant information"
-    ]
-    
-    # Only classify as no_info if it's a completely negative response
-    is_complete_no_info = any(indicator in ai_text for indicator in complete_no_info_indicators)
-    
-    # If it has positive content but mentions some details are missing, it's still partial
-    partial_info_indicators = [
-        "unfortunately", "however", "details about", "specific steps", 
-        "timeline are not available", "more information needed"
-    ]
-    
-    has_partial_limitations = any(indicator in ai_text for indicator in partial_info_indicators)
-    
-    # Determine quality based on content analysis
-    if is_complete_no_info:
-        return "no_info"
-    elif has_positive_content:
-        if has_partial_limitations:
-            return "partial"  # Has good info but acknowledges gaps
-        else:
-            return "excellent"  # Has good info without major gaps
-    
-    # Fallback to search results analysis
-    high_confidence_results = [r for r in search_results if r.get('confidence', 0) > 0.7]
-    knowledge_results = [r for r in search_results if r.get('type') != 'conversation']
-    
-    if high_confidence_results or (knowledge_results and len(knowledge_results) > 1):
-        return "excellent"
-    elif search_results:
-        return "partial"
-    else:
-        return "no_info"
-
-def _extract_source_attribution(search_results: List[Dict[str, Any]]) -> str:
-    """Extract clean source attribution from search results."""
-    if not search_results:
-        return ""
-    
-    # Look for the best source (highest confidence or most relevant)
-    best_result = max(search_results, key=lambda x: x.get('confidence', 0))
-    
-    # Extract user and timestamp info from conversation results
-    if best_result.get('type') == 'conversation':
-        user_id = best_result.get('slack_user_id', '')
-        if user_id:
-            return f"Discussion with @{user_id}"
-    
-    # For knowledge items, try to extract from metadata
-    metadata = best_result.get('metadata', {})
-    if metadata:
-        source_user = metadata.get('source_user_id', '')
-        if source_user:
-            return f"Shared by @{source_user}"
-    
-    return "Team discussion"
-
-def _format_excellent_response(query: str, search_results: List[Dict[str, Any]], ai_response: Dict[str, Any]) -> str:
-    """Format response when we have good, actionable information."""
-    content = ai_response.get('response', '')
-    
-    # Extract the main topic/action from the query for a good title
-    title = _generate_response_title(query, search_results)
-    
-    response = f"✅ **{title}**\n\n{content}"
-    return response
-
-def _format_partial_response(query: str, search_results: List[Dict[str, Any]], ai_response: Dict[str, Any]) -> str:
-    """Format response when we have some information but it's incomplete."""
-    content = ai_response.get('response', '')
-    
-    # Check if this is actually partial or if AI is being overly cautious
-    cautious_indicators = ["sorry", "don't have", "unfortunately", "not provided", "specific steps are not"]
-    if any(indicator in content.lower() for indicator in cautious_indicators):
-        # AI is being overly cautious, try to extract useful info from search results
-        useful_results = [r for r in search_results if r.get('confidence', 0) > 0.5]
-        conversation_results = [r for r in search_results if r.get('type') == 'conversation']
-        
-        if useful_results or conversation_results:
-            title = _generate_response_title(query, search_results)
-            
-            # Extract the useful part of the AI response (before the disclaimer)
-            useful_content = content.split("Unfortunately")[0].split("However")[0].strip()
-            if len(useful_content) < 50:  # If too short, use search results
-                useful_content = _extract_useful_content(useful_results or conversation_results)
-            
-            response = f"⚠️ **Partial Information Found**\n\n**What I found:** {useful_content}"
-            
-            # Add what's missing with specific guidance
-            if "steps" in query.lower() or "how to" in query.lower():
-                response += f"\n\n**What's missing:** Detailed step-by-step instructions"
-                response += f"\n\n**Next steps:** Ask @{_extract_likely_expert(search_results)} for the complete process"
-            else:
-                response += f"\n\n**What's missing:** Complete details weren't captured in our knowledge base"
-                response += f"\n\n**Next steps:** Check with your team for more information"
-            return response
-    
-    title = _generate_response_title(query, search_results)
-    return f"⚠️ **{title}**\n\n{content}"
-
-def _format_no_info_response(query: str, search_results: List[Dict[str, Any]], suggestions: List[str]) -> str:
-    """Format response when no relevant information is found."""
-    response = f"🔍 **No information found in your team's knowledge base**\n\n"
-    response += f"I couldn't find any discussions about {_extract_query_topic(query)} in your Slack history.\n\n"
-    response += "**Suggestions:**\n"
-    response += "• Ask your team - they might have discussed this in a channel I haven't indexed yet\n"
-    response += "• Check if there's existing documentation for this process\n"
-    response += "• Tag someone who might know about this topic"
-    
-    return response
-
-def _generate_response_title(query: str, search_results: List[Dict[str, Any]]) -> str:
-    """Generate a clean, descriptive title for the response."""
-    # Look for process-related keywords
-    query_lower = query.lower()
-    
-    if any(word in query_lower for word in ['steps', 'how to', 'process', 'migrate', 'restart']):
-        if 'kafka' in query_lower:
-            return "Kafka Connector Process"
-        elif 'migration' in query_lower or 'migrate' in query_lower:
-            return "Database Migration Steps"
-        elif 'restart' in query_lower:
-            return "Restart Process"
-        else:
-            return "Process Steps"
-    elif any(word in query_lower for word in ['what is', 'explain', 'about']):
-        return "Information Found"
-    else:
-        return "Team Knowledge"
-
-def _extract_query_topic(query: str) -> str:
-    """Extract the main topic from a user query."""
-    # Simple extraction - could be made more sophisticated
-    query_lower = query.lower()
-    
-    if 'migration' in query_lower:
-        return "database migration"
-    elif 'kafka' in query_lower:
-        return "Kafka processes"
-    elif 'restart' in query_lower:
-        return "restart procedures"
-    else:
-        return "this topic"
-
-def _extract_useful_content(search_results: List[Dict[str, Any]]) -> str:
-    """Extract the most useful content from search results."""
-    # Find the best result
-    best_result = max(search_results, key=lambda x: x.get('confidence', 0))
-    
-    content = best_result.get('content', '')
-    if len(content) > 200:
-        content = content[:200] + "..."
-    
-    return content
-
-async def _resolve_user_mentions_in_response(response_text: str, db: AsyncSession) -> str:
-    """Replace Slack user IDs with actual usernames in response text."""
-    import re
-    
-    # Find all @U... patterns
-    user_id_pattern = r'@(U[A-Z0-9]+)'
-    user_ids = re.findall(user_id_pattern, response_text)
-    
-    resolved_text = response_text
-    for slack_id in user_ids:
-        # Look up the actual username
-        result = await db.execute(
-            select(User).where(User.slack_id == slack_id)
-        )
-        user = result.scalar_one_or_none()
-        if user:
-            # Replace @U0417Q7L4A1 with @username
-            # Clean up the username - if it's "User_UXXXXXX", use a friendlier format
-            raw_username = user.name or slack_id
-            if raw_username.startswith("User_U"):
-                # Extract the user ID part and make it friendlier
-                username = raw_username.replace("User_", "").lower()
-            else:
-                username = raw_username
-            resolved_text = resolved_text.replace(f'@{slack_id}', f'@{username}')
-    
-    return resolved_text
-
-def _extract_likely_expert(search_results: List[Dict[str, Any]]) -> str:
-    """Extract the most likely expert from search results."""
-    # Look for users mentioned in conversation results
-    for result in search_results:
-        if result.get('type') == 'conversation':
-            metadata = result.get('metadata', {})
-            user_id = metadata.get('slack_user_id')
-            if user_id:
-                return user_id
-    
-    # Fallback to a generic suggestion
-    return "your team"
-
-async def format_enhanced_slack_response(
-    query: str, 
-    search_results: List[Dict[str, Any]], 
-    ai_response: Dict[str, Any], 
-    suggestions: List[str],
-    intent_analysis: Dict[str, Any],
-    query_id: Optional[int] = None,
-    context_analysis: Optional[Dict[str, Any]] = None,
-    db: Optional[AsyncSession] = None
-) -> Dict[str, Any]:
-    """Format clean, user-friendly response for Slack display."""
-    try:
-        logger.info(f"AI response structure: {ai_response}")
-        
-        # Determine response quality and format accordingly
-        response_quality = _assess_response_quality(search_results, ai_response, context_analysis)
-        
-        if response_quality == "excellent":
-            response_text = _format_excellent_response(query, search_results, ai_response)
-        elif response_quality == "partial":
-            response_text = _format_partial_response(query, search_results, ai_response)
-        else:
-            response_text = _format_no_info_response(query, search_results, suggestions)
-        
-        # Add clean source attribution if available
-        source_info = _extract_source_attribution(search_results)
-        if source_info:
-            response_text += f"\n\n**Source:** {source_info}"
-        
-        # Resolve user mentions to actual usernames
-        if db:
-            response_text = await _resolve_user_mentions_in_response(response_text, db)
-        
-        return {
-            "response_type": "in_channel",
-            "text": response_text,
-            "blocks": [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": response_text
-                    }
-                },
-                {
-                    "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "text": {
-                                "type": "plain_text",
-                                "text": "👍 Helpful"
-                            },
-                            "style": "primary",
-                            "action_id": "feedback_helpful",
-                            "value": str(query_id) if query_id else "0"
-                        },
-                        {
-                            "type": "button",
-                            "text": {
-                                "type": "plain_text",
-                                "text": "👎 Not Helpful"
-                            },
-                            "action_id": "feedback_not_helpful",
-                            "value": str(query_id) if query_id else "0"
-                        },
-                        {
-                            "type": "button",
-                            "text": {
-                                "type": "plain_text",
-                                "text": "🔗 View Sources"
-                            },
-                            "action_id": "view_sources",
-                            "value": str(query_id) if query_id else "0"
-                        },
-                        {
-                            "type": "button",
-                            "text": {
-                                "type": "plain_text",
-                                "text": "⚠️ Report Issue"
-                            },
-                            "action_id": "report_issue",
-                            "value": str(query_id) if query_id else "0"
-                        }
-                    ]
-                }
-            ]
-        }
-        
-    except Exception as e:
-        logger.error(f"Error formatting enhanced Slack response: {e}")
-        return {
-            "response_type": "ephemeral",
-            "text": "❌ Error formatting response. Please try again."
-        }
-
-def format_slack_response(query: str, search_results: List[Dict[str, Any]], ai_response: Dict[str, Any]) -> Dict[str, Any]:
-    """Format the response for Slack display."""
-    try:
-        # Start with the AI response
-        logger.info(f"AI response structure: {ai_response}")
-        if ai_response.get("fallback"):
-            # Use fallback response
-            response_text = ai_response["response"]
-        else:
-            response_text = f"🤖 *AI Response:*\n{ai_response['response']}"
-        
-        # Add knowledge items
-        if search_results:
-            response_text += "\n\n📚 *Relevant Knowledge:*\n"
-            
-            for i, result in enumerate(search_results[:3], 1):
-                confidence_emoji = "🟢" if result.get("confidence", 0) >= 0.8 else "🟡" if result.get("confidence", 0) >= 0.6 else "🔴"
-                response_text += f"\n{i}. {confidence_emoji} *{result.get('title', 'Untitled')}*\n"
-                response_text += f"   {result.get('summary', 'No summary')}\n"
-                response_text += f"   Confidence: {result.get('confidence', 0):.1%}"
-        else:
-            response_text += "\n\n❌ *No relevant knowledge found*\nI couldn't find any information related to your question in our knowledge base."
-        
-        # Add footer
-        response_text += f"\n\n💡 *Question:* {query}"
-        
-        return {
-            "response_type": "in_channel",
-            "text": response_text,
-            "attachments": [
-                {
-                    "text": f"Processed at {datetime.utcnow().strftime('%H:%M:%S UTC')}",
-                    "color": "#36a64f"
-                }
-            ]
-        }
-        
-    except Exception as e:
-        logger.error(f"Error formatting Slack response: {e}")
-        return {
-            "response_type": "ephemeral",
-            "text": "❌ Error formatting response. Please try again."
-        }
 
 async def send_slack_response(response_url: str, response_data: Dict[str, Any]):
     """Send response to Slack using the response URL."""
@@ -1141,7 +776,97 @@ async def send_slack_response(response_url: str, response_data: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error sending response to Slack: {e}")
 
-async def send_channel_response(channel_id: str, workspace_id: int, response_data: Dict[str, Any]):
+async def _create_non_knowledge_response(intent_result: IntentClassificationResult, query_text: str) -> Dict[str, Any]:
+    """Create appropriate response for non-knowledge queries."""
+    if intent_result.intent == "social_interaction":
+        return {
+            "response": "Hi there! I'm here to help with questions about your team's knowledge and processes. What would you like to know?",
+            "fallback": True
+        }
+    elif intent_result.intent == "conversational_response":
+        return {
+            "response": "I understand. Is there anything else I can help you with?",
+            "fallback": True
+        }
+    elif intent_result.intent == "ignore":
+        return {
+            "response": "I didn't quite catch that. Could you please rephrase your question?",
+            "fallback": True
+        }
+    else:
+        return {
+            "response": "I'm here to help! What would you like to know?",
+            "fallback": True
+        }
+
+async def _convert_to_content_data(
+    ai_response: Optional[Dict[str, Any]], 
+    search_results: List[Dict[str, Any]], 
+    suggestions: List[str],
+    intent_result: IntentClassificationResult
+) -> ContentData:
+    """Convert AI response and search results to ContentData format."""
+    
+    # Extract main content
+    main_content = ""
+    if ai_response and isinstance(ai_response, dict):
+        main_content = ai_response.get("response", "")
+    
+    # Convert search results to sources format
+    sources = []
+    for result in search_results:
+        source = {
+            "title": result.get("title", "Conversation"),
+            "date": result.get("created_at", "Unknown date"),
+            "channel": result.get("channel_name", "Unknown channel"),
+            "excerpt": (result.get("summary") or result.get("content") or "")[:200]
+        }
+        sources.append(source)
+    
+    # Extract next steps from suggestions
+    next_steps = suggestions[:5] if suggestions else []
+    
+    # Extract related information
+    related_info = []
+    if ai_response and isinstance(ai_response, dict):
+        if ai_response.get("related_information"):
+            related_info = ai_response["related_information"][:3]
+    
+    # Determine content type and extract specific data
+    decision_info = None
+    process_steps = None
+    technical_details = None
+    
+    if intent_result.intent == "decision_rationale" and ai_response:
+        decision_info = {
+            "outcome": ai_response.get("decision_outcome", ""),
+            "decision_maker": ai_response.get("decision_maker", ""),
+            "date": ai_response.get("decision_date", ""),
+            "rationale": ai_response.get("rationale", "")
+        }
+    elif intent_result.intent == "process" and ai_response:
+        process_steps = ai_response.get("process_steps", [])
+    elif intent_result.intent == "troubleshooting" and ai_response:
+        technical_details = {
+            "problem": ai_response.get("problem_description", ""),
+            "solution": ai_response.get("solution", ""),
+            "implementation": ai_response.get("implementation_steps", []),
+            "tools": ai_response.get("required_tools", []),
+            "verification": ai_response.get("verification_steps", "")
+        }
+    
+    return ContentData(
+        main_content=main_content,
+        sources=sources,
+        next_steps=next_steps,
+        related_info=related_info,
+        decision_info=decision_info,
+        process_steps=process_steps,
+        technical_details=technical_details,
+        verification_links=[]
+    )
+
+async def send_channel_response(channel_id: str, workspace_id: int, response_data: Dict[str, Any], thread_ts: Optional[str] = None):
     """Send response to the Slack channel."""
     try:
         slack_service = SlackService()
@@ -1157,11 +882,12 @@ async def send_channel_response(channel_id: str, workspace_id: int, response_dat
             if workspace and hasattr(workspace, 'tokens') and workspace.tokens:
                 bot_token = workspace.tokens.get("access_token")
                 if bot_token:
-                    # Send message to channel
+                    # Send message to channel (in thread if thread_ts provided)
                     result = await slack_service.send_message(
                         channel=channel_id,
                         text=response_data.get("text", "Response generated"),
-                        thread_ts=None,  # Main message, not threaded
+                        thread_ts=thread_ts,  # Use thread_ts if provided for threaded responses
+                        blocks=response_data.get("blocks"),  # Include rich formatting blocks
                         token=bot_token
                     )
                     logger.info(f"Sent response to channel {channel_id}")

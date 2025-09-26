@@ -20,8 +20,7 @@ celery_app = Celery(
         "app.workers.embedding_generator",
         "app.workers.query_processor",
         "app.workers.conversation_backfill",
-        "app.workers.accuracy_tester",
-        "app.workers.realtime_extractor"
+        "app.workers.accuracy_tester"
     ]
 )
 
@@ -184,6 +183,18 @@ def cleanup_old_tasks():
     logger.info("Running daily cleanup task...")
     # Implementation for cleanup logic
     return "Cleanup completed"
+
+# Explicitly register all tasks to ensure they're available
+try:
+    from app.workers.query_processor import process_query_async, process_pending_queries
+    from app.workers.message_processor import process_message_async, process_completed_conversations, analyze_conversation_state, process_pending_messages
+    from app.workers.knowledge_extractor import extract_knowledge, extract_knowledge_async
+    from app.workers.embedding_generator import generate_embedding, generate_embedding_async
+    # from app.workers.conversation_backfill import backfill_conversation_history_async  # Circular import issue
+    from app.workers.accuracy_tester import run_daily_accuracy_tests
+    logger.info("Successfully registered all worker tasks")
+except Exception as e:
+    logger.error(f"Failed to register worker tasks: {e}")
 
 if __name__ == "__main__":
     celery_app.start()

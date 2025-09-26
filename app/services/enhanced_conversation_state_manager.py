@@ -190,22 +190,46 @@ class EnhancedConversationStateManager:
         """
         Determine if a conversation is ready for knowledge extraction.
         
-        Only extract from RESOLVED conversations with sufficient content.
+        Extract from conversations with substantial content, even if not fully resolved.
+        MADE MORE PERMISSIVE to extract more knowledge from active conversations.
         """
-        if boundary.state != ConversationState.RESOLVED:
+        # Must have minimum message count (lowered threshold)
+        if boundary.message_count < 3:  # Lowered from min_messages_for_analysis
             return False
         
-        if boundary.confidence < self.config['resolution_confidence_threshold']:
-            return False
+        # RESOLVED conversations are always good for extraction
+        if boundary.state == ConversationState.RESOLVED:
+            return True
         
-        if boundary.message_count < self.config['min_messages_for_analysis']:
-            return False
+        # DEVELOPING conversations with substantial content (lowered threshold)
+        if boundary.state == ConversationState.DEVELOPING and boundary.message_count >= 5:  # Lowered from 10
+            return True
         
-        # Check if conversation has substantive content
-        if not boundary.topic or len(boundary.resolution_indicators) == 0:
-            return False
+        # ABANDONED conversations with substantial content (lowered threshold)
+        if boundary.state == ConversationState.ABANDONED and boundary.message_count >= 8:  # Lowered from 15
+            return True
         
-        return True
+        # PAUSED conversations with good content (lowered threshold)
+        if boundary.state == ConversationState.PAUSED and boundary.message_count >= 5:  # Lowered from 8
+            return True
+        
+        # INITIATED conversations with decent content (new)
+        if boundary.state == ConversationState.INITIATED and boundary.message_count >= 4:
+            return True
+        
+        # ANY conversation with lots of messages should be extracted regardless of state
+        if boundary.message_count >= 20:  # High-value conversations
+            return True
+        
+        # Conversations with multiple participants are likely valuable
+        if boundary.participant_count >= 3 and boundary.message_count >= 6:
+            return True
+        
+        logger.info(f"Conversation {boundary.conversation_id} not ready for extraction: "
+                   f"state={boundary.state}, messages={boundary.message_count}, "
+                   f"participants={boundary.participant_count}")
+        
+        return False
 
     async def detect_topic_shifts(
         self, 
@@ -361,6 +385,7 @@ class EnhancedConversationStateManager:
             # Format conversation for AI analysis
             conversation_text = self._format_messages_for_ai(messages)
             
+            # Enhanced system prompt with better JSON formatting instructions
             system_prompt = """You are an expert conversation analyst. Analyze this Slack conversation and determine its current state.
 
 CONVERSATION STATES:
@@ -376,48 +401,104 @@ ANALYSIS CRITERIA:
 3. Analyze participant engagement patterns
 4. Evaluate if the discussion reached a logical conclusion
 
-Return JSON:
+CRITICAL INSTRUCTIONS:
+- Respond with ONLY a valid JSON object
+- No markdown formatting (no ```json)
+- No explanations before or after the JSON
+- The JSON must be parseable
+
+REQUIRED JSON FORMAT:
 {
-    "state": "INITIATED|DEVELOPING|PAUSED|RESOLVED|ABANDONED",
-    "confidence": 0.0-1.0,
-    "reasoning": "Specific reasoning for this state assessment",
-    "key_indicators": ["list", "of", "key", "phrases", "or", "patterns"],
+    "state": "DEVELOPING",
+    "confidence": 0.75,
+    "reasoning": "Brief explanation of the state assessment",
+    "key_indicators": ["indicator1", "indicator2"],
     "completion_assessment": {
-        "has_clear_outcome": true|false,
-        "decision_made": true|false,
-        "next_steps_defined": true|false,
-        "participants_satisfied": true|false
+        "has_clear_outcome": false,
+        "decision_made": false,
+        "next_steps_defined": false,
+        "participants_satisfied": false
     }
 }"""
 
+            # Use a more structured approach with the OpenAI service
             response = await self.openai_service._make_request(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Analyze this conversation:\n\n{conversation_text}"}
+                    {"role": "user", "content": f"Analyze this conversation and respond with JSON only:\n\n{conversation_text}"}
                 ],
-                temperature=0.1,
-                max_tokens=400
+                temperature=0.3,  # Lower temperature for more consistent JSON output
+                max_completion_tokens=300
             )
             
             import json
-            result = json.loads(response['choices'][0]['message']['content'])
-            return result
+            import re
+            
+            # Get the response content
+            content = response['choices'][0]['message']['content'].strip()
+            logger.info(f"AI response content: {content[:200]}...")
+            
+            # Clean up the content - remove any markdown formatting
+            content = re.sub(r'^```json\s*', '', content)
+            content = re.sub(r'\s*```$', '', content)
+            content = content.strip()
+            
+            # Try to extract JSON if it's wrapped in other text
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                json_str = content
+            
+            # Parse JSON with better error handling
+            try:
+                result = json.loads(json_str)
+                
+                # Validate and fix required fields
+                if 'state' not in result or result['state'] not in ['INITIATED', 'DEVELOPING', 'PAUSED', 'RESOLVED', 'ABANDONED']:
+                    result['state'] = 'DEVELOPING'
+                if 'confidence' not in result or not isinstance(result['confidence'], (int, float)):
+                    result['confidence'] = 0.5
+                if 'reasoning' not in result:
+                    result['reasoning'] = 'AI analysis completed'
+                if 'key_indicators' not in result:
+                    result['key_indicators'] = []
+                if 'completion_assessment' not in result:
+                    result['completion_assessment'] = {
+                        'has_clear_outcome': False,
+                        'decision_made': False,
+                        'next_steps_defined': False,
+                        'participants_satisfied': False
+                    }
+                
+                logger.info(f"Successfully parsed AI analysis: state={result['state']}, confidence={result['confidence']}")
+                return result
+                
+            except json.JSONDecodeError as je:
+                logger.error(f"JSON parsing failed. Raw content: {content}")
+                logger.error(f"JSON error: {je}")
+                # Return a fallback result instead of raising
+                return self._get_fallback_analysis_result(f"JSON parse error: {je}")
             
         except Exception as e:
             logger.error(f"Error in AI conversation state analysis: {e}")
-            return {
-                'state': 'DEVELOPING',
-                'confidence': 0.5,
-                'reasoning': f'AI analysis failed: {e}',
-                'key_indicators': [],
-                'completion_assessment': {
-                    'has_clear_outcome': False,
-                    'decision_made': False,
-                    'next_steps_defined': False,
-                    'participants_satisfied': False
-                }
+            return self._get_fallback_analysis_result(f"AI analysis failed: {e}")
+
+    def _get_fallback_analysis_result(self, error_reason: str) -> Dict[str, Any]:
+        """Get fallback analysis result when AI analysis fails."""
+        return {
+            'state': 'DEVELOPING',
+            'confidence': 0.5,
+            'reasoning': error_reason,
+            'key_indicators': [],
+            'completion_assessment': {
+                'has_clear_outcome': False,
+                'decision_made': False,
+                'next_steps_defined': False,
+                'participants_satisfied': False
             }
+        }
 
     async def _determine_conversation_state(
         self,
@@ -487,13 +568,13 @@ Examples:
 Return only the topic phrase, nothing else."""
 
             response = await self.openai_service._make_request(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": conversation_text}
                 ],
-                temperature=0.1,
-                max_tokens=20
+                temperature=1.0,
+                max_completion_tokens=20
             )
             
             topic = response['choices'][0]['message']['content'].strip()
@@ -592,13 +673,13 @@ Return JSON:
 }"""
 
             response = await self.openai_service._make_request(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"BEFORE:\n{before_text}\n\nAFTER:\n{after_text}"}
                 ],
-                temperature=0.1,
-                max_tokens=200
+                temperature=1.0,
+                max_completion_tokens=200
             )
             
             import json

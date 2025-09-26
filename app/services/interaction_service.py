@@ -564,14 +564,14 @@ class InteractionService:
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "📝 *Conversation in #general*\n<https://slack.com/link|View original message>\n_\"We decided to migrate to PostgreSQL because...\"_"
+                        "text": "*Conversation in #general*\n<https://slack.com/link|View original message>\n_\"We decided to migrate to PostgreSQL because...\"_"
                     }
                 },
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "📋 *Documentation*\n<https://docs.example.com|Migration Guide>\n_\"Step-by-step process for database migration\"_"
+                        "text": "*Documentation*\n<https://docs.example.com|Migration Guide>\n_\"Step-by-step process for database migration\"_"
                     }
                 }
             ]

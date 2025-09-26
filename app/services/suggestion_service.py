@@ -198,13 +198,13 @@ class SuggestionService:
             Generate 3-5 relevant follow-up questions."""
 
             response = await self.openai_service._make_request(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
                 ],
                 temperature=0.7,
-                max_tokens=300
+                max_completion_tokens=300
             )
             
             content = response['choices'][0]['message']['content']
@@ -270,8 +270,14 @@ class SuggestionService:
                 score += 0.4
             
             # Entity relevance
-            for entity_type, entity_list in entities.items():
-                for entity in entity_list:
+            if isinstance(entities, dict):
+                for entity_type, entity_list in entities.items():
+                    if isinstance(entity_list, list):
+                        for entity in entity_list:
+                            if entity.lower() in suggestion_lower:
+                                score += 0.2
+            elif isinstance(entities, list):
+                for entity in entities:
                     if entity.lower() in suggestion_lower:
                         score += 0.2
             

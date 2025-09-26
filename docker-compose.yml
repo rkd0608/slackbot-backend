@@ -65,7 +65,7 @@ services:
       - db
       - redis
     restart: unless-stopped
-    command: ["celery", "-A", "app.workers.simplified_celery_app", "worker", "--loglevel=info", "--queues=queries", "--concurrency=2", "--prefetch-multiplier=1"]
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info", "--queues=queries", "--concurrency=2", "--prefetch-multiplier=1"]
 
   # Background worker for knowledge extraction and message processing
   celery-background-worker:
@@ -84,7 +84,7 @@ services:
       - db
       - redis
     restart: unless-stopped
-    command: ["celery", "-A", "app.workers.simplified_celery_app", "worker", "--loglevel=info", "--queues=background", "--concurrency=1"]
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info", "--queues=background", "--concurrency=1"]
 
   celery-beat:
     build: .
@@ -102,7 +102,7 @@ services:
       - db
       - redis
     restart: unless-stopped
-    command: ["celery", "-A", "app.workers.simplified_celery_app", "beat", "--loglevel=info"]
+    command: ["celery", "-A", "app.workers.celery_app", "beat", "--loglevel=info"]
 
 volumes:
   db_data:

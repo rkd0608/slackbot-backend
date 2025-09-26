@@ -37,6 +37,24 @@ class OpenAIService:
         
         logger.info("OpenAI service initialized")
     
+    async def generate_completion(self, prompt: str, max_completion_tokens: int = 200, temperature: float = 1.0) -> str:
+        """Generate a simple text completion for classification."""
+        try:
+            await self._wait_for_rate_limit()
+            
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_completion_tokens=max_completion_tokens,
+                temperature=temperature
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            logger.error(f"Error generating completion: {e}")
+            raise
+    
     async def _wait_for_rate_limit(self):
         """Wait if necessary to respect rate limits."""
         current_time = time.time()
@@ -140,7 +158,7 @@ class OpenAIService:
             
             # Make API request
             response = await self._make_request(
-                model="gpt-3.5-turbo",
+                model="gpt-5-nano",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     *context_messages,
@@ -250,7 +268,7 @@ Extract any valuable knowledge following the specified format and rules."""
         # Add extraction metadata
         enhanced_result["extraction_metadata"] = {
             "extracted_at": datetime.utcnow().isoformat(),
-            "model_used": "gpt-3.5-turbo",
+            "model_used": "gpt-5-nano",
             "message_id": message_metadata.get("message_id"),
             "message_type": message_metadata.get("message_type"),
             "significance_score": message_metadata.get("significance_score"),
@@ -337,7 +355,7 @@ Verify each knowledge item and identify any hallucinations or unsupported claims
             
             # Make verification request
             response = await self._make_request(
-                model="gpt-3.5-turbo",
+                model="gpt-5-nano",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
@@ -353,7 +371,7 @@ Verify each knowledge item and identify any hallucinations or unsupported claims
             # Add verification metadata
             verification_result["verification_metadata"] = {
                 "verified_at": datetime.utcnow().isoformat(),
-                "model_used": "gpt-3.5-turbo",
+                "model_used": "gpt-5-nano",
                 "source_message_count": len(source_messages)
             }
             

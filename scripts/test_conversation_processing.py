@@ -17,7 +17,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from app.core.database import get_session_factory
-from app.services.conversation_state_manager import ConversationStateManager, ConversationState
+from app.services.enhanced_conversation_state_manager import EnhancedConversationStateManager as ConversationStateManager, ConversationState
 from app.services.conversation_knowledge_extractor import ConversationKnowledgeExtractor
 from app.models.base import Conversation, Message
 from sqlalchemy import select, desc

@@ -15,9 +15,10 @@ from sqlalchemy import select, and_, desc
 from ..models.base import Message, Conversation, KnowledgeItem
 from ..services.openai_service import OpenAIService
 from ..services.embedding_service import EmbeddingService
-from ..services.conversation_state_manager import ConversationStateManager, ConversationState
-from ..services.process_recognizer import ProcessRecognizer, ProcessState
+from ..services.enhanced_conversation_state_manager import EnhancedConversationStateManager as ConversationStateManager, ConversationState
+# from ..services.process_recognizer import ProcessRecognizer, ProcessState  # Service doesn't exist
 from ..services.hallucination_preventer import HallucinationPreventer
+from ..services.user_service import UserService
 
 
 class ConversationKnowledgeExtractor:
@@ -27,8 +28,9 @@ class ConversationKnowledgeExtractor:
         self.openai_service = OpenAIService()
         self.embedding_service = EmbeddingService()
         self.state_manager = ConversationStateManager()
-        self.process_recognizer = ProcessRecognizer()
+        # self.process_recognizer = ProcessRecognizer()  # Service doesn't exist
         self.hallucination_preventer = HallucinationPreventer()
+        self.user_service = UserService()
 
     async def extract_from_completed_conversations(
         self,
@@ -168,36 +170,15 @@ class ConversationKnowledgeExtractor:
             if substantive_messages < 2:
                 return False
             
-            # NEW: Enhanced process validation
-            process_result = await self.process_recognizer.analyze_conversation_for_processes(
-                conversation_id, db
-            )
+            # Process recognition disabled - service doesn't exist
+            # process_result = await self.process_recognizer.analyze_conversation_for_processes(
+            #     conversation_id, db
+            # )
             
-            # If it's a process discussion, apply stricter criteria
-            if process_result.is_process:
-                logger.info(f"Process conversation detected: {process_result.process_state.value}")
-                
-                # Don't extract from promised but undelivered processes
-                if process_result.process_state == ProcessState.PROMISED:
-                    logger.info(f"Rejecting extraction: Process promised but not delivered")
-                    return False
-                
-                # Don't extract from incomplete processes with low completeness
-                if (process_result.process_state == ProcessState.INCOMPLETE or 
-                    process_result.process_state == ProcessState.IN_PROGRESS):
-                    if process_result.completeness_score < 0.7:
-                        logger.info(f"Rejecting extraction: Process incomplete (completeness: {process_result.completeness_score:.2f})")
-                        return False
-                
-                # Don't extract from interrupted processes
-                if process_result.process_state == ProcessState.INTERRUPTED:
-                    logger.info(f"Rejecting extraction: Process was interrupted")
-                    return False
-                
-                # For processes, require higher step count
-                if process_result.step_count < 2:
-                    logger.info(f"Rejecting extraction: Too few process steps ({process_result.step_count})")
-                    return False
+            # Process recognition disabled - service doesn't exist
+            # if process_result.is_process:
+            #     logger.info(f"Process conversation detected: {process_result.process_state.value}")
+            #     # ... process validation logic commented out
             
             # Check for technical/process content (original logic)
             has_technical_content = any(
@@ -218,7 +199,7 @@ class ConversationKnowledgeExtractor:
         low_value_patterns = [
             "thanks", "thank you", "got it", "ok", "okay", "yes", "no", "yep", "nope",
             "sure", "sounds good", "perfect", "great", "awesome", "cool", "nice",
-            "👍", "👌", "✅", "lol", "haha", "😄", "😊"
+            "+1", "ok", "yes", "lol", "haha", ":)", ":D"
         ]
         
         if content_lower in low_value_patterns:
@@ -255,6 +236,15 @@ class ConversationKnowledgeExtractor:
         with proper narrative understanding.
         """
         try:
+            # Get conversation details first
+            conv_query = select(Conversation).where(Conversation.id == conversation_id)
+            conv_result = await db.execute(conv_query)
+            conversation = conv_result.scalar_one_or_none()
+            
+            if not conversation:
+                logger.warning(f"Conversation {conversation_id} not found")
+                return []
+            
             # Get all messages in chronological order
             query = select(Message).where(
                 Message.conversation_id == conversation_id
@@ -266,8 +256,8 @@ class ConversationKnowledgeExtractor:
             if not messages:
                 return []
             
-            # Assemble conversation context
-            conversation_context = await self._assemble_conversation_context(messages)
+            # Assemble conversation context with channel information and user resolution
+            conversation_context = await self._assemble_conversation_context(messages, conversation, workspace_id, db)
             
             # Extract knowledge using AI with full context
             knowledge_data = await self._ai_extract_knowledge(conversation_context)
@@ -313,16 +303,31 @@ class ConversationKnowledgeExtractor:
                     
                     logger.info(f"Knowledge confidence adjusted from {original_confidence:.2f} to {adjusted_confidence:.2f}")
                     
-                    # Generate embedding for the knowledge
-                    embedding = await self.embedding_service.generate_embedding(
-                        f"{knowledge.get('title', '')} {knowledge.get('content', '')}"
+                    # Resolve user mentions in knowledge content for better readability
+                    resolved_title = await self.user_service.resolve_user_mentions_in_text(
+                        knowledge.get('title', ''), workspace_id, db, format_style="name_only"
                     )
+                    resolved_content = await self.user_service.resolve_user_mentions_in_text(
+                        knowledge.get('content', ''), workspace_id, db, format_style="name_only"
+                    )
+                    resolved_summary = await self.user_service.resolve_user_mentions_in_text(
+                        knowledge.get('summary', ''), workspace_id, db, format_style="name_only"
+                    )
+                    
+                    # Generate embedding for the knowledge (using resolved text for better semantic matching)
+                    embedding_vector = await self.embedding_service.generate_embedding(
+                        f"{resolved_title} {resolved_content}"
+                    )
+                    # Convert embedding list to JSON string for database storage
+                    import json
+                    embedding = json.dumps(embedding_vector) if embedding_vector else None
                     
                     knowledge_item = KnowledgeItem(
                         workspace_id=workspace_id,
                         conversation_id=conversation_id,
-                        title=knowledge.get('title', 'Extracted Knowledge'),
-                        content=knowledge.get('content', ''),
+                        title=resolved_title or 'Extracted Knowledge',
+                        summary=resolved_summary,
+                        content=resolved_content,
                         knowledge_type=knowledge.get('type', 'general'),
                         confidence_score=adjusted_confidence,  # Use adjusted confidence
                         source_messages=knowledge.get('source_message_ids', []),
@@ -334,6 +339,8 @@ class ConversationKnowledgeExtractor:
                             'extraction_timestamp': datetime.utcnow().isoformat(),
                             'message_count': len(messages),
                             'participant_count': len(set(msg.slack_user_id for msg in messages)),
+                            'source_channel_id': conversation_context.get('channel_id'),
+                            'source_channel_name': conversation_context.get('channel_name'),
                             'hallucination_check': {
                                 'is_safe': hallucination_check.is_safe,
                                 'confidence': hallucination_check.confidence,
@@ -360,7 +367,13 @@ class ConversationKnowledgeExtractor:
             logger.error(f"Error extracting from conversation {conversation_id}: {e}")
             return []
 
-    async def _assemble_conversation_context(self, messages: List[Message]) -> Dict[str, Any]:
+    async def _assemble_conversation_context(
+        self, 
+        messages: List[Message], 
+        conversation: Optional[Conversation] = None,
+        workspace_id: Optional[int] = None,
+        db: Optional[AsyncSession] = None
+    ) -> Dict[str, Any]:
         """
         Assemble full conversation context with proper narrative structure.
         
@@ -404,6 +417,8 @@ class ConversationKnowledgeExtractor:
             
             return {
                 'conversation_id': messages[0].conversation_id,
+                'channel_id': conversation.slack_channel_id if conversation else None,
+                'channel_name': conversation.slack_channel_name if conversation else None,
                 'start_time': messages[0].created_at.isoformat(),
                 'end_time': messages[-1].created_at.isoformat(),
                 'duration_minutes': (messages[-1].created_at - messages[0].created_at).total_seconds() / 60,
@@ -411,15 +426,70 @@ class ConversationKnowledgeExtractor:
                 'participant_count': len(participants),
                 'participants': list(participants.values()),
                 'message_sequence': message_sequence,
-                'conversation_text': '\n'.join([
-                    f"[{msg.created_at.strftime('%H:%M')}] {msg.slack_user_id}: {msg.content}"
-                    for msg in messages
-                ])
+                'conversation_text': await self._format_conversation_with_names(messages, workspace_id, db)
             }
             
         except Exception as e:
             logger.error(f"Error assembling conversation context: {e}")
             return {}
+    
+    async def _format_conversation_with_names(
+        self,
+        messages: List[Message],
+        workspace_id: Optional[int],
+        db: Optional[AsyncSession]
+    ) -> str:
+        """
+        Format conversation messages with resolved user names instead of IDs.
+        
+        Args:
+            messages: List of message objects
+            workspace_id: Workspace ID for user resolution
+            db: Database session for user lookup
+            
+        Returns:
+            Formatted conversation text with real names
+        """
+        if not workspace_id or not db:
+            # Fallback to original format if no resolution possible
+            return '\n'.join([
+                f"[{msg.created_at.strftime('%H:%M')}] {msg.slack_user_id}: {msg.content}"
+                for msg in messages
+            ])
+        
+        try:
+            formatted_messages = []
+            
+            for msg in messages:
+                # Get user display name
+                user_name = await self.user_service.get_user_name(
+                    msg.slack_user_id, 
+                    workspace_id, 
+                    db
+                )
+                
+                # Resolve any user mentions in the message content
+                resolved_content = await self.user_service.resolve_user_mentions_in_text(
+                    msg.content,
+                    workspace_id,
+                    db,
+                    format_style="at_name"  # Format as @name
+                )
+                
+                # Format the message
+                formatted_messages.append(
+                    f"[{msg.created_at.strftime('%H:%M')}] {user_name}: {resolved_content}"
+                )
+            
+            return '\n'.join(formatted_messages)
+            
+        except Exception as e:
+            logger.warning(f"Error formatting conversation with names: {e}")
+            # Fallback to original format
+            return '\n'.join([
+                f"[{msg.created_at.strftime('%H:%M')}] {msg.slack_user_id}: {msg.content}"
+                for msg in messages
+            ])
 
     async def _ai_extract_knowledge(self, conversation_context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -440,7 +510,7 @@ Extract knowledge as if you're creating a detailed meeting notes document that s
 - SPECIFICALLY what needs to happen next
 - CONCRETELY what problems were solved and how
 
-📋 CONTENT DEPTH REQUIREMENTS:
+CONTENT DEPTH REQUIREMENTS:
 
 For DECISIONS:
 - What exactly was decided? (specific choice made)
@@ -466,22 +536,33 @@ For PROCESSES:
 - What happens if something goes wrong?
 - How is success measured?
 
-🔍 QUALITY STANDARDS:
+QUALITY STANDARDS:
 - SPECIFIC QUOTES: Include actual quotes from key messages
 - CONCRETE DETAILS: Numbers, dates, names, specific tools/services
 - ACTIONABLE STEPS: Someone should be able to follow this immediately
 - COMPLETE CONTEXT: Background, discussion, and resolution
 - CLEAR ATTRIBUTION: Who said what, with their role/expertise
 
-❌ REJECT VAGUE CONTENT:
+REJECT VAGUE CONTENT:
 - "The team discussed database options" → TOO VAGUE
 - "John mentioned PostgreSQL might be better" → TOO VAGUE
 - "We decided to use PostgreSQL because it's better" → TOO VAGUE
 
-✅ EXTRACT RICH CONTENT:
+EXTRACT RICH CONTENT:
 - "John (Senior Engineer) recommended PostgreSQL over MySQL on March 15th because: 1) Better JSON support for our user profile data, 2) Superior performance for complex queries, 3) Better compatibility with our existing Python stack. Sarah (Tech Lead) agreed, noting we need the JSONB indexing for the new analytics features. Decision: Migrate user database to PostgreSQL by end of Q2. Next steps: John to create migration plan by March 22nd, Sarah to review infrastructure requirements."
 
-🏷️ KNOWLEDGE TYPES:
+🔧 PRESERVE ALL TECHNICAL DETAILS:
+- Command line examples: Include exact commands, flags, and syntax
+- Code snippets: Preserve formatting and complete examples
+- Configuration changes: Include file names, exact values, and locations
+- Scripts and automation: Capture complete procedures and parameters
+- Error messages: Include full error text and diagnostic information
+- Version numbers: Preserve exact versions and compatibility notes
+- File paths: Include complete paths and directory structures
+
+CRITICAL: If someone mentions specific commands, scripts, configurations, or technical procedures, you MUST include them verbatim in the extracted content.
+
+KNOWLEDGE TYPES:
 - technical_solution: Specific step-by-step solutions to technical problems
 - process_definition: Detailed workflows and procedures
 - decision_made: Specific decisions with reasoning and implications
@@ -489,7 +570,7 @@ For PROCESSES:
 - troubleshooting_guide: Step-by-step problem diagnosis and fixes
 - best_practice: Proven approaches with context and results
 
-📊 CONFIDENCE SCORING:
+CONFIDENCE SCORING:
 - 0.9-1.0: Complete information with clear decisions, specific details, and actionable outcomes
 - 0.7-0.8: Good information with most details but some gaps
 - 0.5-0.6: Partial information, missing key details or context
@@ -527,13 +608,13 @@ Return JSON:
 }"""
 
             response = await self.openai_service._make_request(
-                model="gpt-4",  # Use GPT-4 for better reasoning
+                model="gpt-4o",  # Use GPT-4o for larger context window (128K tokens)
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Analyze this conversation:\n\n{conversation_context['conversation_text']}\n\nConversation metadata: {conversation_context}"}
                 ],
                 temperature=0.1,  # Low temperature for consistent extraction
-                max_tokens=1500
+                max_completion_tokens=3000  # INCREASED: More tokens for detailed technical extraction
             )
             
             import json

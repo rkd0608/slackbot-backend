@@ -411,17 +411,21 @@ async def trigger_knowledge_extraction(
     """Trigger knowledge extraction for a workspace."""
     try:
         # Import here to avoid circular dependency
-        from ...workers.simple_knowledge_extractor import extract_knowledge_for_workspace
+        from ...services.conversation_knowledge_extractor import ConversationKnowledgeExtractor
         
-        # Queue the extraction task
-        task_result = extract_knowledge_for_workspace.delay(workspace_id)
+        # Extract knowledge directly (no longer using celery task)
+        extractor = ConversationKnowledgeExtractor()
+        knowledge_items = await extractor.extract_from_completed_conversations(
+            workspace_id=workspace_id,
+            db=db
+        )
         
-        logger.info(f"Queued knowledge extraction for workspace {workspace_id}, task ID: {task_result.id}")
+        logger.info(f"Extracted {len(knowledge_items)} knowledge items for workspace {workspace_id}")
         
         return {
             "status": "success",
-            "message": "Knowledge extraction queued",
-            "task_id": task_result.id,
+            "message": "Knowledge extraction completed",
+            "items_extracted": len(knowledge_items),
             "workspace_id": workspace_id
         }
         

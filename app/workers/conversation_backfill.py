@@ -1,14 +1,13 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional
-from celery import Celery
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text
-from sqlalchemy.orm import selectinload
+from typing import Dict, Any
 
-from ..models.base import Workspace, Conversation, Message
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..core.database import AsyncSessionLocal
+from ..models.base import Workspace, Conversation, Message
 from ..services.slack_service import SlackService
 from ..workers.celery_app import celery_app
 

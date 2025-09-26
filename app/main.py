@@ -38,34 +38,34 @@ app.include_router(accuracy.router, prefix="/api/v1/accuracy", tags=["accuracy"]
 @app.on_event("startup")
 async def startup_event():
     """Application startup event."""
-    logger.info("🚀 SlackBot Backend starting up...")
-    logger.info(f"📚 API Documentation available at: {app.docs_url}")
-    logger.info(f"🔍 Alternative docs at: {app.redoc_url}")
+    logger.info("SlackBot Backend starting up...")
+    logger.info(f"API Documentation available at: {app.docs_url}")
+    logger.info(f"Alternative docs at: {app.redoc_url}")
     
     # Log current configuration
     app_base_url = get_env_var("APP_BASE_URL", "http://localhost:8000")
-    logger.info(f"🌐 App Base URL: {app_base_url}")
+    logger.info(f"App Base URL: {app_base_url}")
     
     slack_client_id = get_env_var("SLACK_CLIENT_ID", "Not configured")
     if slack_client_id != "Not configured":
-        logger.info(f"🔑 Slack Client ID: {slack_client_id[:8]}...")
+        logger.info(f"Slack Client ID: {slack_client_id[:8]}...")
     else:
-        logger.warning("⚠️ SLACK_CLIENT_ID not configured")
+        logger.warning("SLACK_CLIENT_ID not configured")
     
     # Trigger automatic conversation backfill
     try:
         from .core.startup import trigger_automatic_backfill
-        logger.info("🔄 Triggering automatic conversation backfill...")
+        logger.info("Triggering automatic conversation backfill...")
         await trigger_automatic_backfill()
-        logger.info("✅ Automatic backfill check completed")
+        logger.info("Automatic backfill check completed")
     except Exception as e:
-        logger.warning(f"⚠️ Automatic backfill failed: {e}")
+        logger.warning(f"Automatic backfill failed: {e}")
         # Don't fail startup for backfill errors
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Application shutdown event."""
-    logger.info("🛑 SlackBot Backend shutting down...")
+    logger.info("SlackBot Backend shutting down...")
 
 @app.get("/")
 async def root():

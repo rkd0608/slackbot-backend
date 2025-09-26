@@ -161,7 +161,7 @@ async def slack_callback(
             </style>
         </head>
         <body>
-            <div class="success">✅ Installation Successful!</div>
+            <div class="success">Installation Successful!</div>
             <h2>Workspace: {workspace_name}</h2>
             <div class="workspace">
                 <p><strong>Workspace ID:</strong> {workspace_info["id"]}</p>

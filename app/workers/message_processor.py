@@ -1,22 +1,21 @@
 """Message processor worker for handling Slack message ingestion and processing."""
 
 import asyncio
+from datetime import datetime
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy import select, and_, update
-from sqlalchemy.orm import sessionmaker
+
 from loguru import logger
-import json
-import re
+from sqlalchemy import select, and_, update
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
 from .celery_app import celery_app
 from ..core.config import settings
 from ..models.base import Message, User, Workspace
-from ..services.slack_service import SlackService
-from ..services.conversation_state_manager import ConversationStateManager, ConversationState
 from ..services.conversation_knowledge_extractor import ConversationKnowledgeExtractor
+from ..services.enhanced_conversation_state_manager import EnhancedConversationStateManager as ConversationStateManager
 from ..utils.text_processor import clean_text, extract_mentions, extract_urls
+
 
 def get_async_session():
     """Create a new async session for each task."""
@@ -31,8 +30,9 @@ def process_message_async(
     channel_id: str,
     user_id: str,
     text: str,
+    timestamp: Optional[str] = None,
     thread_ts: Optional[str] = None,
-    ts: Optional[str] = None
+    raw_payload: Optional[dict] = None
 ):
     """Process a message asynchronously using Celery."""
     try:
@@ -51,7 +51,7 @@ def process_message_async(
                     user_id=user_id,
                     text=text,
                     thread_ts=thread_ts,
-                    ts=ts
+                    ts=timestamp
                 )
             )
             return result

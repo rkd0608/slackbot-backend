@@ -204,6 +204,7 @@ class VectorService:
                     vector_results = await self._vector_search_simple(
                         query_embedding,
                         workspace_id,
+                        channel_id,  # Add channel_id for channel isolation
                         knowledge_type,
                         min_confidence,
                         limit // 2,
@@ -264,6 +265,7 @@ class VectorService:
         self,
         query_embedding: List[float],
         workspace_id: Optional[int] = None,
+        channel_id: Optional[str] = None,
         knowledge_type: Optional[str] = None,
         min_confidence: float = 0.0,
         limit: int = 10,
@@ -277,13 +279,13 @@ class VectorService:
             
             # Build search query that looks for knowledge items with embeddings
             search_query = """
-                SELECT 
+                SELECT
                     ki.id,
                     ki.title,
                     ki.summary,
                     ki.content,
                     ki.confidence_score,
-                    ki.item_metadata,
+                    ki.metadata,
                     ki.created_at,
                     ki.updated_at
                 FROM knowledgeitem ki
@@ -299,12 +301,26 @@ class VectorService:
                 params["workspace_id"] = workspace_id
             
             if knowledge_type:
-                search_query += " AND ki.item_metadata->>'type' = :knowledge_type"
+                search_query += " AND ki.metadata->>'type' = :knowledge_type"
                 params["knowledge_type"] = knowledge_type
             
             if min_confidence > 0:
                 search_query += " AND ki.confidence_score >= :min_confidence"
                 params["min_confidence"] = min_confidence
+            
+            # Channel isolation logic (same as text search):
+            # - If channel_id starts with 'D' (DM), search workspace-wide (no channel filter)
+            # - If channel_id starts with 'C' (public/private channel), restrict to that channel only
+            # - If no channel_id, search workspace-wide
+            if channel_id and not channel_id.startswith('D'):
+                # This is a public/private channel - restrict to channel-specific knowledge only
+                search_query += " AND ki.metadata->>'source_channel_id' = :channel_id"
+                params["channel_id"] = channel_id
+                logger.info(f"Vector search applying channel isolation for channel {channel_id}")
+            elif channel_id and channel_id.startswith('D'):
+                # This is a DM - allow workspace-wide search (no channel filter)
+                logger.info(f"Vector search: DM detected ({channel_id}) - allowing workspace-wide knowledge search")
+            # If no channel_id, search workspace-wide (no additional filter needed)
             
             # Order by confidence and recency for now
             search_query += """
@@ -322,7 +338,7 @@ class VectorService:
             # Format results
             vector_results = []
             for row in rows:
-                metadata = row.item_metadata if hasattr(row, 'item_metadata') else {}
+                metadata = row.metadata if hasattr(row, 'metadata') else {}
                 
                 vector_results.append({
                     "id": row.id,
@@ -466,11 +482,19 @@ class VectorService:
                 search_query += " AND ki.confidence_score >= :min_confidence"
                 params["min_confidence"] = min_confidence
             
-            # Try channel-specific search first, but don't make it mandatory
-            # since older knowledge items might not have source_channel_id
-            if channel_id:
-                search_query += " AND (ki.metadata->>'source_channel_id' = :channel_id OR ki.metadata->>'source_channel_id' IS NULL)"
+            # Channel isolation logic: 
+            # - If channel_id starts with 'D' (DM), search workspace-wide (no channel filter)
+            # - If channel_id starts with 'C' (public/private channel), restrict to that channel only
+            # - If no channel_id, search workspace-wide
+            if channel_id and not channel_id.startswith('D'):
+                # This is a public/private channel - restrict to channel-specific knowledge only
+                search_query += " AND ki.metadata->>'source_channel_id' = :channel_id"
                 params["channel_id"] = channel_id
+                logger.info(f"Applying channel isolation for channel {channel_id}")
+            elif channel_id and channel_id.startswith('D'):
+                # This is a DM - allow workspace-wide search (no channel filter)
+                logger.info(f"DM detected ({channel_id}) - allowing workspace-wide knowledge search")
+            # If no channel_id, search workspace-wide (no additional filter needed)
             
             # Order by relevance and add limit
             search_query += """
@@ -493,7 +517,7 @@ class VectorService:
             text_results = []
             for row in rows:
                 # SQLAlchemy automatically deserializes JSONB, so metadata is already a dict
-                metadata = row.item_metadata if hasattr(row, 'item_metadata') else (row.conversation_metadata if hasattr(row, 'conversation_metadata') else {})
+                metadata = row.metadata if hasattr(row, 'metadata') else (row.conversation_metadata if hasattr(row, 'conversation_metadata') else {})
                 
                 text_results.append({
                     "id": row.id,

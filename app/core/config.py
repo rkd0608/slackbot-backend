@@ -45,6 +45,11 @@ class Settings(BaseSettings):
         alias="SLACK_CLIENT_SECRET",
         description="Slack app client secret"
     )
+    slack_bot_user_id: str = Field(
+        default="",
+        alias="SLACK_BOT_USER_ID",
+        description="Slack bot user ID for mention detection"
+    )
     
     # AI Configuration
     openai_api_key: str = Field(

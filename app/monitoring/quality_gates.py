@@ -983,15 +983,15 @@ async def run_quality_gates():
     assessment = result['production_readiness_assessment']
     print(f"Overall Status: {assessment['overall_status'].upper()}")
     print(f"Overall Score: {assessment['overall_score']:.2%}")
-    print(f"Ready for Production: {'✅ YES' if assessment['ready_for_production'] else '❌ NO'}")
+    print(f"Ready for Production: {'YES' if assessment['ready_for_production'] else 'NO'}")
     
     if assessment['blocking_issues']:
-        print(f"\n🚨 Blocking Issues ({len(assessment['blocking_issues'])}):")
+        print(f"\nBlocking Issues ({len(assessment['blocking_issues'])}):") 
         for issue in assessment['blocking_issues']:
             print(f"  • {issue}")
     
     if assessment['recommendations']:
-        print(f"\n💡 Recommendations ({len(assessment['recommendations'])}):")
+        print(f"\nRecommendations ({len(assessment['recommendations'])}):") 
         for rec in assessment['recommendations']:
             print(f"  • {rec}")
     

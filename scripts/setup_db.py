@@ -8,15 +8,15 @@ from pathlib import Path
 
 def run_command(command, description):
     """Run a command and handle errors."""
-    print(f"🔄 {description}...")
+    print(f"Running {description}...")
     try:
         result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
-        print(f"✅ {description} completed successfully")
+        print(f"{description} completed successfully")
         if result.stdout:
             print(f"   Output: {result.stdout.strip()}")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ {description} failed:")
+        print(f"{description} failed:")
         print(f"   Error: {e}")
         if e.stdout:
             print(f"   stdout: {e.stdout}")
@@ -27,7 +27,7 @@ def run_command(command, description):
 
 def main():
     """Main setup function."""
-    print("🚀 Setting up database...")
+    print("Setting up database...")
     
     # Check if we're in the right directory
     if not Path("alembic").exists():
